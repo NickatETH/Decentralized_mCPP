@@ -22,27 +22,32 @@ from robots import (
     compute_stc,
     offset_stc_path,
     polygon_to_grid,
+    compute_energy_profile,
 )
-from simulation import SimulationState  # type: ignore  # external module
+from simulation import SimulationState, UAV  # type: ignore  # external module
 
 # Initial agent positions (id → (x, y))
 INITIAL_POSITIONS: Dict[int, Tuple[float, float]] = {
     0: (1, 1),
     1: (2, 4),
-    2: (3, 7),
-    3: (19, 5),
-    4: (17, 2),
-    5: (19, 8),
+    # 2: (3, 7),
+    # 3: (19, 5),
+    # 4: (17, 2),
+    # 5: (19, 8),
 }
 
 # Workspace: L‑shaped polygon defined counter‑clockwise
 WORKSPACE_COORDS: List[Tuple[float, float]] = [
+    # (0, 0),
+    # (50, 0),
+    # (50, 20),
+    # (35, 25),
+    # (30, 50),
+    # (0, 50),
     (0, 0),
-    (50, 0),
-    (50, 20),
-    (35, 25),
-    (30, 50),
-    (0, 50),
+    (10, 0),
+    (10, 10),
+    (0, 10),
 ]
 
 # Balancing parameters
@@ -114,12 +119,17 @@ def plot_results(sim_state: SimulationState) -> None:
             ax.plot(sx, sy, "k--", linewidth=1)
 
             offset_path = offset_stc_path(stc_path, CELL_SIZE)
-            ox, oy = zip(*offset_path)
+            ox, oy = zip(*offset_path.coords)
             ax.plot(ox, oy, "-", linewidth=2, color=colors[agent_id % len(colors)])
 
         # Centroid
         cx, cy = sim_state.centroids[agent_id]
         ax.plot(cx, cy, "ro", markersize=5)
+        
+        #Energy profile
+        uav = UAV()  # Create a UAV instance
+        Energy = compute_energy_profile(uav, offset_path)
+        print("Energy profile computed: ", Energy)
 
     ax.set_aspect("equal", adjustable="box")
     ax.set_title(
@@ -129,6 +139,8 @@ def plot_results(sim_state: SimulationState) -> None:
     ax.set_ylabel("Y coordinate")
     ax.grid(True)
     plt.show()
+    
+
 
 
 
@@ -137,6 +149,8 @@ def main() -> None:
     sim_state = build_simulation_state()
     balance_power_cells(sim_state)
     plot_results(sim_state)
+    
+
 
 
 if __name__ == "__main__":

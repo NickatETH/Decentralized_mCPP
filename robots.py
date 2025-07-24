@@ -13,6 +13,12 @@ import numpy as np
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import split
 
+import math
+import numpy as np
+from typing import List, Union
+from shapely.geometry import LineString, LinearRing, Point
+
+from simulation import UAV
 
 Coordinate = Tuple[float, float]
 Grid = List[Coordinate]
@@ -156,10 +162,80 @@ def offset_stc_path(stc_path: Grid, cell_size: float) -> Grid:
     The path is obtained by buffering the open STC polyline by a quarter of the
     grid cell size using round caps and joins.
     """
+    radius_factor = 0.25  # quarter of the cell size
+    resolution = 4  # number of segments per quarter circle
     if not stc_path:
         return []
 
-    line = LineString(stc_path)  # Keep open — rounded end caps extend properly
-    offset_poly = line.buffer(cell_size / 4.0, join_style=1, cap_style=1)
+    r = cell_size * radius_factor
+    line = LineString(stc_path)  # keep path open – round caps form at both ends
 
-    return list(offset_poly.exterior.coords)
+    # Initial offset
+    poly = line.buffer(r, join_style=1, cap_style=1, resolution=resolution)
+
+    # Morphological closing: dilate then erode by the same radius. This rounds
+    # *concave* corners that the first buffering step leaves unchanged.
+    poly = poly.buffer(r*0.99, join_style=1, cap_style=1, resolution=resolution)
+    poly = poly.buffer(-r*1.0, join_style=1, cap_style=1, resolution=resolution)
+
+    # Exterior ring traces the final closed loop
+    ring = poly.exterior
+    return ring
+
+
+def create_speed_profile(
+    uav: UAV,
+    ring: LinearRing,
+    angle_thresh: float = math.radians(5),
+) -> List[float]:
+    """One speed per sample along `ring`, frozen on curves."""
+    L = ring.length
+    interval = 1.0  # default distance between samples
+    if L == 0 or interval <= 0:
+        return []
+
+    # 1) sample distances and points
+    n = int(math.floor(L / interval)) + 1
+    dists = np.linspace(0, L, n)
+    pts = np.array([ring.interpolate(d).coords[0] for d in dists])
+
+    # 2) compute headings of each segment
+    deltas = pts[1:] - pts[:-1]                    # shape (n-1, 2)
+    headings = np.arctan2(deltas[:,1], deltas[:,0])  # shape (n-1,)
+
+    # 3) detect where heading jumps by more than threshold
+    #    prepend a zero so we have one flag per point
+    dh = np.abs(np.diff(headings, prepend=headings[0]))
+    is_curve = dh >= angle_thresh                # curve‐flag for each segment
+
+    # 4) build speed profile
+    speeds = [0.5*(uav.v_min + uav.v_max)]        # seed at mid-range
+    for i in range(1, n):
+        if is_curve[i-1]:                         # if previous segment was curved
+            speeds.append(speeds[-1])             # freeze speed
+        else:
+            # random ±Δv walk on straight
+            step = np.random.choice([-uav.delta_v, 0, uav.delta_v])
+            cand = speeds[-1] + step
+            # clamp
+            speeds.append(min(max(cand, uav.v_min), uav.v_max))
+    return speeds
+
+
+def compute_energy_profile(uav: UAV, ring: LinearRing) -> List[float]:
+    """Compute energy profile for a UAV flying along `ring` at `interval` spacing."""
+    speeds = create_speed_profile(uav, ring, 1.0)  # default interval
+    Energy = 0.0
+
+    for i in range(len(speeds)):
+        # Power = Drag + Thrust
+        drag = uav.B * speeds[i] ** 2
+        thrust = uav.A / (speeds[i] ** 2) 
+        power = drag + thrust
+
+        # Energy = Power * Time
+        time = 1.0 / speeds[i]
+        Energy += power * time
+
+
+    return Energy
