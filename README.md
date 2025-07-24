@@ -7,6 +7,12 @@ Mohamed Samshad and Ketan Rajawat
 [arXiv:2411.02772](https://arxiv.org/pdf/2411.02772)
 
 ---
+![Example Coverage](images/Voronoi_STC.png)
+
+
+---
+
+
 
 ## Features
 
