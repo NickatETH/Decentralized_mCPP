@@ -13,19 +13,19 @@ import matplotlib.pyplot as plt
 #     3: (18, 5),
 # }
 
-# initial_positions = {
-#         0: (1, 1),
-#         1: (2, 4),
-#         2: (3, 7),
-#         3: (19, 5),
-#         4: (17, 2),
-#         5: (19, 8),
-#     }
-
 initial_positions = {
-    0: (1, 1),
-    1: (2, 4),
-}
+        0: (1, 1),
+        1: (2, 4),
+        2: (3, 7),
+        3: (19, 5),
+        4: (17, 2),
+        5: (19, 8),
+    }
+
+# initial_positions = {
+#     0: (1, 1),
+#     1: (2, 4),
+# }
 # 2) create the simulation state
 agent_ids = list(initial_positions.keys())
 
@@ -59,7 +59,7 @@ coords_rect = [
     (10, 10),
     (0, 10),]
 
-l_shape = Polygon(coords_rect)
+l_shape = Polygon(coords_l)
 sim_state.bounding_polygon = l_shape
 
 gamma = 0.075
