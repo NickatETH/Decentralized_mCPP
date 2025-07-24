@@ -1,6 +1,3 @@
-import time
-import numpy as np
-
 class SimulationState:
     def __init__(self, agent_ids):
         # Core per-agent storage
@@ -9,12 +6,8 @@ class SimulationState:
         self.weights    = {i: 1.0  for i in agent_ids}  # w_i
         self.areas      = {i: None for i in agent_ids}  # |V_i|
         self.centroids  = {i: None for i in agent_ids}  # c_i
-        self.bounding_polygon = None  # to be set externally
+        self.bounding_polygon = None 
         
-        # Communication graph (static neighbors)
-        self.neighbours = {i: [] for i in agent_ids}     # neighbor_map
-        
-    # --- Methods to access/update these dictionaries follow ---
     def get_agent_state(self, agent_id):
         """Return (position, weight, area, centroid) for agent_id."""
         return (
@@ -27,10 +20,6 @@ class SimulationState:
     def get_agent_ids(self):
         """Return list of all agent IDs."""
         return list(self.positions.keys())
-    
-    def get_neighbours(self, agent_id):
-        """Return list of neighbour IDs for agent_id."""
-        return self.neighbours[agent_id]
     
     def get_agent_seed_and_weight(self, agent_id):
         """Return (position, weight) for agent_id."""
@@ -50,11 +39,6 @@ class SimulationState:
         self.areas[agent_id]     = area
         self.centroids[agent_id] = centroid
     
-    def register_agent(self, aid, pos, weight=0.0):
-        self.positions[aid]  = pos
-        self.weights[aid]    = weight
-        self.areas[aid]      = None
-        self.centroids[aid]  = None
-        self.neighbours[aid] = []
+
 
 
