@@ -1,9 +1,8 @@
-# central_sim.py
+# main.py
 
 from simulation import SimulationState
-from robots import compute_power_cell
-from shapely.geometry import box, Polygon
-import time
+from robots import compute_power_cell, polygon_to_grid, compute_stc, offset_stc_path
+from shapely.geometry import Polygon
 import matplotlib.pyplot as plt
 
 
@@ -14,14 +13,19 @@ import matplotlib.pyplot as plt
 #     3: (18, 5),
 # }
 
+# initial_positions = {
+#         0: (1, 1),
+#         1: (2, 4),
+#         2: (3, 7),
+#         3: (19, 5),
+#         4: (17, 2),
+#         5: (19, 8),
+#     }
+
 initial_positions = {
-        0: (1, 1),
-        1: (2, 4),
-        2: (3, 7),
-        3: (19, 5),
-        4: (17, 2),
-        5: (19, 8),
-    }
+    0: (1, 1),
+    1: (2, 4),
+}
 # 2) create the simulation state
 agent_ids = list(initial_positions.keys())
 
@@ -40,15 +44,22 @@ for i in agent_ids:
 
 # Define the Shape
 # Create an L-shaped bounding polygon
-coords = [
+coords_l = [
     (0, 0),
     (50, 0),
-    (50, 20),
-    (30, 20),
+    (50,20),
+    (35, 25),
     (30, 50),
     (0, 50)
 ]
-l_shape = Polygon(coords)
+# Create a rectangular bounding polygon
+coords_rect = [
+    (0, 0),
+    (10, 0),
+    (10, 10),
+    (0, 10),]
+
+l_shape = Polygon(coords_rect)
 sim_state.bounding_polygon = l_shape
 
 gamma = 0.075
@@ -78,15 +89,16 @@ while True:
         print(f"final areas: {sim_state.areas}")
         break
     
-
+#path for stc
+cell_size = 1.0
+paths = []
 
 # --- Plot final power cells ---
 fig, ax = plt.subplots(figsize=(20,10))
 colors = plt.cm.tab10.colors  # a palette of 10 distinct colors
 
-for aid in sim_state.get_agent_ids():
-    # recompute the final cell for each agent
-    cell = compute_power_cell(sim_state, aid)
+for agent_id in sim_state.get_agent_ids():
+    cell = compute_power_cell(sim_state, agent_id)
     if cell.is_empty:
         continue
 
@@ -94,20 +106,40 @@ for aid in sim_state.get_agent_ids():
     x, y = cell.exterior.xy
     ax.fill(
         x, y,
-        alpha=0.75,
-        color=colors[aid % len(colors)],
-        label=f'Agent {aid}'
+        alpha=0.25,
+        color=colors[agent_id % len(colors)],
+        label=f'Agent {agent_id}'
     )
+
+    grid = polygon_to_grid(cell, cell_size)
+    
+    #plot the grid points
+    gx, gy = zip(*grid)
+    ax.plot(gx, gy, 'o', markersize=4, color=colors[agent_id % len(colors)], label=f'Grid Points {agent_id}')
+
+    # compute STC path
+    tree = compute_stc(grid)
+    xt, yt = zip(*tree)
+    
+    # offset the path
+    path = offset_stc_path(tree, cell_size  )
+    paths.append(path)
+    xp, yp = zip(*path)
     
     #plot the centroid
-    cx, cy = sim_state.centroids[aid]
-    ax.plot(cx, cy, 'ro', markersize=5, label=f'Centroid {aid}')
+    cx, cy = sim_state.centroids[agent_id]
+    ax.plot(cx, cy, 'ro', markersize=5, label=f'Centroid {agent_id}')
+    ax.plot(xt, yt, 'k--', linewidth=1, label=f'STC Path {agent_id}')
+    ax.plot(xp, yp, '-', linewidth=2, color=colors[agent_id % len(colors)], label=f'Offset Path {agent_id}')
 
-# set plot limits to the workspace bounds
-minx, miny, maxx, maxy = sim_state.bounding_polygon.bounds
-ax.set_xlim(minx, maxx)
-ax.set_ylim(miny, maxy)
-ax.set_aspect('equal')
-ax.legend(loc='upper right')
-ax.set_title('Final Weighted Voronoi (Power) Cells')
+
+    ax.set_title(f'Power Cells and STC Paths for {len(sim_state.get_agent_ids())} Agents')
+    ax.set_xlabel('X Coordinate')
+    ax.set_ylabel('Y Coordinate')
+
+    ax.set_aspect('equal', adjustable='box')    
+    ax.legend(loc='upper right')
+plt.grid()
 plt.show()
+
+
