@@ -221,10 +221,22 @@ def create_speed_profile(
             speeds.append(min(max(cand, uav.v_min), uav.v_max))
     return speeds
 
+def create_const_speed_profile(
+    uav: UAV,
+    ring: LinearRing,
+    speed: float = 15.0,
+) -> List[float]:
+    """Create a constant speed profile for the UAV along the `ring`."""
+    if speed < uav.v_min or speed > uav.v_max:
+        raise ValueError(f"Speed {speed} is out of bounds [{uav.v_min}, {uav.v_max}]")
+
+    n = int(math.ceil(ring.length / 1.0))  # number of samples
+    return [speed] * n  # constant speed for each sample
+
 
 def compute_energy_profile(uav: UAV, ring: LinearRing) -> List[float]:
     """Compute energy profile for a UAV flying along `ring` at `interval` spacing."""
-    speeds = create_speed_profile(uav, ring, 1.0)  # default interval
+    speeds = create_const_speed_profile(uav, ring)
     Energy = 0.0
 
     for i in range(len(speeds)):

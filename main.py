@@ -29,20 +29,25 @@ from simulation import SimulationState, UAV  # type: ignore  # external module
 # Initial agent positions (id → (x, y))
 INITIAL_POSITIONS: Dict[int, Tuple[float, float]] = {
     0: (1, 1),
-    1: (2, 4),
-    2: (3, 7),
-    3: (19, 5),
-    4: (17, 2),
-    5: (49, 20),
+    # 1: (2, 4),
+    # 2: (3, 7),
+    # 3: (19, 5),
+    # 4: (17, 2),
+    # 5: (49, 20),
 }
 
 # Workspace: L‑shaped polygon defined counter‑clockwise
 WORKSPACE_COORDS: List[Tuple[float, float]] = [
+    # (0, 0),
+    # (50, 0),
+    # (50, 30),
+    # (25, 50),
+    # (0, 30),
     (0, 0),
-    (50, 0),
-    (50, 30),
-    (25, 50),
-    (0, 30),
+    (0, 18.027),
+    (23.18, 10.3),
+    (23.83, 0),
+    (0, 0),
 ]
 
 # ETH corporate color hex codes
@@ -109,9 +114,9 @@ def balance_power_cells(sim_state: SimulationState) -> None:
 
 def plot_results(sim_state: SimulationState) -> None:
     """Plot power cells, grid points, and coverage paths."""
-    fig, ax = plt.subplots(figsize=(20, 10))
+    fig, ax = plt.subplots(figsize=(8, 8))
     
-    figure, axs = plt.subplots(figsize=(12, 8))
+    figure, axs = plt.subplots(figsize=(8, 8))
 
     for agent_id in sim_state.get_agent_ids():
         cell = compute_power_cell(sim_state, agent_id)
@@ -120,29 +125,29 @@ def plot_results(sim_state: SimulationState) -> None:
 
         # Power‑cell polygon
         x, y = cell.exterior.xy
-        ax.fill(x, y, alpha=0.5, color=colors[agent_id % len(colors)])
+        ax.fill(x, y, alpha=0.4, label=f"Agent {agent_id}")
         axs.fill(x, y, alpha=0.5, color=colors[agent_id % len(colors)], label=f"Agent {agent_id}")
         
         # Centroid
         cx, cy = sim_state.centroids[agent_id]
-        ax.plot(cx, cy, "ro", markersize=5)
-        label = "Centroid" if agent_id == 5 else None
-        axs.plot(cx, cy, "ro", markersize=5, label=label)
+        # ax.plot(cx, cy, "ro", markersize=5)
+        # label = "Centroid" if agent_id == 5 else None
+        # axs.plot(cx, cy, "ro", markersize=5, label=label)
 
         # Raster grid and STC path
         grid = polygon_to_grid(cell, CELL_SIZE)
         if grid:
             gx, gy = zip(*grid)
             ax.plot(gx, gy, "o", markersize=4, color=colors[agent_id % len(colors)])
-            axs.plot(gx, gy, "o", markersize=4, color=colors[agent_id % len(colors)])
+            # axs.plot(gx, gy, "o", markersize=2, color=colors[agent_id % len(colors)])
 
             stc_path = compute_stc(grid)
             sx, sy = zip(*stc_path)
-            ax.plot(sx, sy, "k--", linewidth=1)
+            ax.plot(sx, sy, "k--", linewidth=1, label=f"Spanning tree")
 
             offset_path = offset_stc_path(stc_path, CELL_SIZE)
             ox, oy = zip(*offset_path.coords)
-            ax.plot(ox, oy, "-", linewidth=2, color=colors[agent_id % len(colors)])
+            ax.plot(ox, oy, "-", linewidth=2, color=colors[agent_id % len(colors)], label=f"Robot Path {agent_id}")
             
 
 
@@ -153,23 +158,22 @@ def plot_results(sim_state: SimulationState) -> None:
         print("Energy profile computed: ", Energy)
 
     ax.set_aspect("equal", adjustable="box")
-    ax.set_title(
-        f"Power Cells and Coverage Paths for {len(sim_state.get_agent_ids())} Agents"
-    )
+    # ax.set_title(
+    #     f"Power Cells and Coverage Paths for {len(sim_state.get_agent_ids())} Agents"
+    # )
+    ax.set_title(f"Spanning tree and robot path for Agent {agent_id}")
     ax.set_xlabel("X coordinate")
     ax.set_ylabel("Y coordinate")
     ax.grid(True)
     
     axs.set_aspect("equal", adjustable="box")
-    axs.set_title(
-        f"Grid cell adaptation{len(sim_state.get_agent_ids())} Robots"
-    )
+    # axs.set_title("Weighted Voronoi Cells for 6 Robots")
     axs.set_xlabel("X coordinate")
     axs.set_ylabel("Y coordinate")
-    axs.grid(True)
+    axs.grid(True)    
+    ax.legend(loc='upper right')
     plt.legend()
-    plt.show()
-    plt.savefig("WVC.png", dpi=300, bbox_inches='tight')
+    # plt.show()
     
     
 
