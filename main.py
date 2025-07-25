@@ -30,25 +30,38 @@ from simulation import SimulationState, UAV  # type: ignore  # external module
 INITIAL_POSITIONS: Dict[int, Tuple[float, float]] = {
     0: (1, 1),
     1: (2, 4),
-    # 2: (3, 7),
-    # 3: (19, 5),
-    # 4: (17, 2),
-    # 5: (19, 8),
+    2: (3, 7),
+    3: (19, 5),
+    4: (17, 2),
+    5: (49, 20),
 }
 
 # Workspace: L‑shaped polygon defined counter‑clockwise
 WORKSPACE_COORDS: List[Tuple[float, float]] = [
-    # (0, 0),
-    # (50, 0),
-    # (50, 20),
-    # (35, 25),
-    # (30, 50),
-    # (0, 50),
     (0, 0),
-    (10, 0),
-    (10, 10),
-    (0, 10),
+    (50, 0),
+    (50, 30),
+    (25, 50),
+    (0, 30),
 ]
+
+# ETH corporate color hex codes
+colors = [
+    "#215CAF",  # ETH Blue
+    "#007894",  # ETH Petrol
+    "#627313",  # ETH Green
+    "#8E6713",  # ETH Bronze
+    "#B7352D",  # ETH Red
+    "#A7117A",  # ETH Purple
+    "#6F6F6F",  # ETH Grey
+]
+
+# Optional: If you need exactly 10 colors (like tab10), repeat or interpolate
+while len(colors) < 10:
+    colors.append(colors[len(colors) % len(colors)])
+
+# Set ETH colors as default color cycle
+plt.rcParams['axes.prop_cycle'] = plt.cycler(color=colors)
 
 # Balancing parameters
 GAMMA: float = 0.075  # gradient‑descent step size
@@ -97,7 +110,8 @@ def balance_power_cells(sim_state: SimulationState) -> None:
 def plot_results(sim_state: SimulationState) -> None:
     """Plot power cells, grid points, and coverage paths."""
     fig, ax = plt.subplots(figsize=(20, 10))
-    colors = plt.cm.tab10.colors  # cycle of 10 distinct colours
+    
+    figure, axs = plt.subplots(figsize=(12, 8))
 
     for agent_id in sim_state.get_agent_ids():
         cell = compute_power_cell(sim_state, agent_id)
@@ -106,13 +120,21 @@ def plot_results(sim_state: SimulationState) -> None:
 
         # Power‑cell polygon
         x, y = cell.exterior.xy
-        ax.fill(x, y, alpha=0.25, color=colors[agent_id % len(colors)])
+        ax.fill(x, y, alpha=0.5, color=colors[agent_id % len(colors)])
+        axs.fill(x, y, alpha=0.5, color=colors[agent_id % len(colors)], label=f"Agent {agent_id}")
+        
+        # Centroid
+        cx, cy = sim_state.centroids[agent_id]
+        ax.plot(cx, cy, "ro", markersize=5)
+        label = "Centroid" if agent_id == 5 else None
+        axs.plot(cx, cy, "ro", markersize=5, label=label)
 
         # Raster grid and STC path
         grid = polygon_to_grid(cell, CELL_SIZE)
         if grid:
             gx, gy = zip(*grid)
             ax.plot(gx, gy, "o", markersize=4, color=colors[agent_id % len(colors)])
+            axs.plot(gx, gy, "o", markersize=4, color=colors[agent_id % len(colors)])
 
             stc_path = compute_stc(grid)
             sx, sy = zip(*stc_path)
@@ -121,10 +143,9 @@ def plot_results(sim_state: SimulationState) -> None:
             offset_path = offset_stc_path(stc_path, CELL_SIZE)
             ox, oy = zip(*offset_path.coords)
             ax.plot(ox, oy, "-", linewidth=2, color=colors[agent_id % len(colors)])
+            
 
-        # Centroid
-        cx, cy = sim_state.centroids[agent_id]
-        ax.plot(cx, cy, "ro", markersize=5)
+
         
         #Energy profile
         uav = UAV()  # Create a UAV instance
@@ -138,7 +159,18 @@ def plot_results(sim_state: SimulationState) -> None:
     ax.set_xlabel("X coordinate")
     ax.set_ylabel("Y coordinate")
     ax.grid(True)
+    
+    axs.set_aspect("equal", adjustable="box")
+    axs.set_title(
+        f"Grid cell adaptation{len(sim_state.get_agent_ids())} Robots"
+    )
+    axs.set_xlabel("X coordinate")
+    axs.set_ylabel("Y coordinate")
+    axs.grid(True)
+    plt.legend()
     plt.show()
+    plt.savefig("WVC.png", dpi=300, bbox_inches='tight')
+    
     
 
 
