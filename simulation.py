@@ -9,6 +9,8 @@ class SimulationState:
         self.areas      = {i: None for i in agent_ids}  # |V_i|
         self.centroids  = {i: None for i in agent_ids}  # c_i
         self.bounding_polygon = None 
+        self.paths = {i: None for i in agent_ids}  # Placeholder for the path if needed
+        self.starting_points = {i: 0.0 for i in agent_ids}  # Starting points for agents
         
     def get_agent_state(self, agent_id):
         """Return (position, weight, area, centroid) for agent_id."""
@@ -40,6 +42,15 @@ class SimulationState:
     def set_agent_area_centroid(self, agent_id, area, centroid):
         self.areas[agent_id]     = area
         self.centroids[agent_id] = centroid
+        
+    def get_agent_post_at_time(self, agent_id, t):
+        if len(self.paths[agent_id]) < t + self.starting_points[agent_id]:
+            time = t - len(self.paths[agent_id]) + self.starting_points[agent_id]
+        else:
+            time = t + self.starting_points[agent_id]
+        return self.paths[agent_id][time] 
+    
+    def get_lighest_nb
     
 
 class UAV: 

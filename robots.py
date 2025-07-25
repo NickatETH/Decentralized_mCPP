@@ -234,10 +234,16 @@ def create_const_speed_profile(
     return [speed] * n  # constant speed for each sample
 
 
-def compute_energy_profile(uav: UAV, ring: LinearRing) -> List[float]:
+def compute_energy_profile(uav: UAV, ring: LinearRing, speeds: List[float]) -> List[float]:
     """Compute energy profile for a UAV flying along `ring` at `interval` spacing."""
-    speeds = create_const_speed_profile(uav, ring)
     Energy = 0.0
+    
+    coords = list(ring.coords)          # freeze a copy once
+    if len(coords) < 2:                 # guard against degenerate rings
+        raise ValueError("ring has < 2 vertices")
+    
+    if len(speeds) != len(coords) - 1:
+        raise ValueError("speeds must match segment count")
 
     for i in range(len(speeds)):
         # Power = Drag + Thrust
@@ -246,8 +252,24 @@ def compute_energy_profile(uav: UAV, ring: LinearRing) -> List[float]:
         power = drag + thrust
 
         # Energy = Power * Time
-        time = 1.0 / speeds[i]
+        if i == 0:
+            dist = Point(coords[0]).distance(Point(coords[1]))
+        else:
+            dist = Point(coords[i]).distance(Point(coords[i-1]))
+        time = dist / speeds[i]
         Energy += power * time
+        
+    # Check if in a turn (angle difference between segments is significant)
 
+    
+    for i in range(1, len(coords)):
+        p1 = Point(coords[i-1])
+        p2 = Point(coords[i])
+        angle_diff = p1.angle(p2)
+        if abs(angle_diff) > math.radians(5):  # threshold for significant turn
+            # Adjust energy for turns if necessary
+            phi = math.atan(speeds[i]**2 / (9.81 * 0.5))
+            power *= 1.0 / math.cos(phi)
+        print(f"Energy: {power}")
 
     return Energy

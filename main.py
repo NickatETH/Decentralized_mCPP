@@ -23,6 +23,7 @@ from robots import (
     offset_stc_path,
     polygon_to_grid,
     compute_energy_profile,
+    create_const_speed_profile,
 )
 from simulation import SimulationState, UAV  # type: ignore  # external module
 
@@ -147,32 +148,45 @@ def plot_results(sim_state: SimulationState) -> None:
 
             offset_path = offset_stc_path(stc_path, CELL_SIZE)
             ox, oy = zip(*offset_path.coords)
+            sim_state.paths[agent_id] = offset_path  # Store path in simulation state
             ax.plot(ox, oy, "-", linewidth=2, color=colors[agent_id % len(colors)], label=f"Robot Path {agent_id}")
             
-
-
-        
-        #Energy profile
+        # Get speed profile for the UAV
         uav = UAV()  # Create a UAV instance
-        Energy = compute_energy_profile(uav, offset_path)
+        speeds = create_const_speed_profile(uav, offset_path, 15.0)  # 15.0 m/s constant speed
+
+        #Energy profile
+        Energy = compute_energy_profile(uav, offset_path, speeds)
         print("Energy profile computed: ", Energy)
 
-    ax.set_aspect("equal", adjustable="box")
+    com_rad = compute_communication_radius(sim_state, uav)
+    print(f"Communication radius: {com_rad:.2f} m")
+
+
+
+
+
+
+
+
+
+
+    # ax.set_aspect("equal", adjustable="box")
     # ax.set_title(
     #     f"Power Cells and Coverage Paths for {len(sim_state.get_agent_ids())} Agents"
     # )
-    ax.set_title(f"Spanning tree and robot path for Agent {agent_id}")
-    ax.set_xlabel("X coordinate")
-    ax.set_ylabel("Y coordinate")
-    ax.grid(True)
+    # ax.set_title(f"Spanning tree and robot path for Agent {agent_id}")
+    # ax.set_xlabel("X coordinate")
+    # ax.set_ylabel("Y coordinate")
+    # ax.grid(True)
     
-    axs.set_aspect("equal", adjustable="box")
+    # axs.set_aspect("equal", adjustable="box")
     # axs.set_title("Weighted Voronoi Cells for 6 Robots")
-    axs.set_xlabel("X coordinate")
-    axs.set_ylabel("Y coordinate")
-    axs.grid(True)    
-    ax.legend(loc='upper right')
-    plt.legend()
+    # axs.set_xlabel("X coordinate")
+    # axs.set_ylabel("Y coordinate")
+    # axs.grid(True)    
+    # ax.legend(loc='upper right')
+    # plt.legend()
     # plt.show()
     
     
