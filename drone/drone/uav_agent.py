@@ -516,35 +516,35 @@ class UavAgent(Node):
     # Start‑GHS handler
     # ------------------------------------------------------------------
     def start_cb(self, msg: Float64MultiArray):
+        """
+        Expects a Float64MultiArray whose length is a multiple of 4:
+            [t0, aid0, rid, sp0,   t0, aid1, rid, sp1,   ...]
+        Only the tuple addressed to *this* agent is processed.
+        """
+        print(f"Starting GHS for agent {self.agent_id} ")
         data = msg.data
-        # Sanity check
-        if len(data) % 3 != 0:
-            self.get_logger().error(f"start_cb: expected multiples of 3, got {len(data)} elements")
-            print(f"start_cb: data = {data}")
+        if len(data) < 2:
+            self.get_logger().error("start_cb: message too short")
             return
 
-        self.starting_point, aid_f, rid = data
+        t_target = data[0]
+        rid      = data[1]
 
-        # Ignore sp for other agents
-        if int(aid_f) != int(self.agent_id):
-            return
+        idx      = int(1 + self.agent_id)   
+        sp       = data[idx]
+        self.starting_point = sp
 
-        # ---------- SAFE INDEXING ----------
-        coords = list(self.path.coords)       
-        if not coords:
-            self.get_logger().error("start_cb: path is empty")
-            return
 
-        idx = int(round(float(self.starting_point) * (len(coords) - 1))) % len(coords)
-        x, y = coords[idx]
-        # Store as tuple or shapely Point:
-        self.radius_pos = (x, y)                   # or Point(x, y)
+        # derive path index from sp
+        path_idx = int((t_target + sp) * (len(self.path.coords) - 1) % len(self.path.coords))
+        self.radius_pos = self.path.coords[path_idx]
+
 
         self.send_beacon()  # send initial beacon
         self.frag = FragmentState(self.agent_id)  # reset fragment state
         self.get_clock().sleep_for(Duration(seconds=0.1))
         # start timer for GHS probe ( required for asynchronous operation )
-        self.ghs_timer = self.create_timer(0.5,lambda: self._send_test(int(rid)))
+        self.ghs_timer = self.create_timer(0.5,lambda: self._send_test(rid))
 
 
 
@@ -558,7 +558,7 @@ class UavAgent(Node):
                 best = (nbr_uid, w)
         self.frag.best_out = best
 
-    def _send_test(self, rid: int):
+    def _send_test(self, rid):
         self._compute_best_out()
         if self.ghs_timer is not None:
             self.ghs_timer.cancel()  # stop timer
@@ -618,7 +618,7 @@ class UavAgent(Node):
                 
                 
     # REPORT helper – bubble fragment MWOE to root
-    def _report_up(self, w: float, rid: int):
+    def _report_up(self, w: float, rid):
         if self.frag.root == self.agent_id:          # I'm root → decide radius
             pkt_r = Float64MultiArray(data=[w, rid])
             self.radius_pub.publish(pkt_r)

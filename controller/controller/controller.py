@@ -51,6 +51,21 @@ def launch_agent(aid: int, x: float, y: float) -> subprocess.Popen:
 class Controller(Node):
     def __init__(self) -> None:
         super().__init__('controller')
+        self.start_pub = self.create_publisher(
+            Float64MultiArray, '/start_ghs', qos_reliable_tx)
+        self.radius_sub = self.create_subscription(
+            Float64MultiArray, '/radius', self.radius_cb, qos_reliable_vol)
+        self.radius_marker_pub = self.create_publisher(Marker, '/comm_radius_marker', qos_reliable_tx)
+        self.radius_timer = None
+
+
+
+        self.scheduler = RadiusScheduler(self,
+                                    self.start_pub,
+                                    v_max=10.0,
+                                    eps=0.01)
+        
+
 
         # don’t collide with Node internals!
         self._energy_clients_dict: Dict[int, rclpy.client.Client] = {}
@@ -64,7 +79,7 @@ class Controller(Node):
         self.b = 1.0
         
         self.com_estimate = False
-        self.coms = 20
+        self.com_ok = False
 
         # launch agents
         for aid in AGENT_IDS:
@@ -83,29 +98,12 @@ class Controller(Node):
                 self.get_logger().warn(f'{srv} not up yet, waiting…')
             self._send_request(aid)
 
-        # Request comm range estimation
-        self.rad_timer = None
-        self.start_pub = self.create_publisher(
-            Float64MultiArray, '/start_ghs', qos_reliable_tx)
-        self.radius_sub = self.create_subscription(
-            Float64MultiArray, '/radius', self.radius_cb, qos_reliable_vol)
-        self.radius_marker_pub = self.create_publisher(Marker, '/comm_radius_marker', qos_reliable_tx)
 
-        self.radius_timer = None
-
-    def calculate_radius(self):
-        i = np.random.randint(0, 1000)
-        for aid in AGENT_IDS:
-            sp = np.random.uniform(0, 1)
-            self.start_pub.publish(Float64MultiArray(data=[sp, float(aid), float(i)]))
-        self.get_logger().info(f'Sent radius estimation request for round {i}')
 
 
     def radius_cb(self, msg: Float64MultiArray):
-        self.coms -= 1
-        radius, rid = msg.data
-        rid = int(rid)
-        self.get_logger().info(f'Result: r(t) = {radius:.2f} m  (rid {rid})')
+        r, rid = msg.data
+        self.scheduler.store_radius(r, rid)
 
 
 
@@ -155,10 +153,89 @@ class Controller(Node):
             for aid in done:
                 del self._energy_futures_dict[aid]
         self.get_logger().info('All energy requests done, waiting for comm radius estimation...')
-        while self.coms > 0 and rclpy.ok():
-            self.calculate_radius()
-            rclpy.spin_once(self, timeout_sec=0.2)
+        self.radius_timer = self.create_timer(3.0, self.scheduler.maybe_request_probe)
+        while not self.com_ok and rclpy.ok():
+            rclpy.spin_once(self, timeout_sec=0.5)
         self._shutdown_agents()
+
+
+
+
+class RadiusScheduler:
+    """Minimal Shubert–Piyavskii sampler for r(t) with L = 2 · v_max."""
+
+    def __init__(self, node: rclpy.node.Node,
+                 start_pub,                 # the existing publisher
+                 v_max: float,              # worst‑case UAV speed [m/s]
+                 eps: float = 2.0):         # desired accuracy   [m]
+        self._node      = node
+        self._pub       = start_pub
+        self._L         = 2.0 * v_max
+        self._eps       = eps
+        self._round_id  = 0
+        # (t,r) pairs already measured; endpoints hold +∞ until sampled
+        self._samples = [(0.0, 0.0), (1.0, 0.0)]
+        self.max_radius = 0.0               # highest r(t) seen so far
+
+    # ------------------------------------------------------------------ helpers
+    def _roof(self, t: float) -> float:
+        """Upper envelope U(t) = min_k ( r_k + L |t - t_k| )."""
+        return min(r + self._L * abs(t - tk) for tk, r in self._samples)
+
+    def _next_probe_time(self) -> float | None:
+        """Return the t where the gap between roof and chord is biggest."""
+        best_gap, best_t = 0.0, None
+        for (t0, r0), (t1, r1) in zip(self._samples, self._samples[1:]):
+            t_mid = 0.5 * (t0 + t1)
+            gap   = self._roof(t_mid) - 0.5 * (r0 + r1)
+            if gap > best_gap:
+                best_gap, best_t = gap, t_mid
+        if best_gap < self._eps: 
+            self._node.get_logger().info(f"Final max radius: {self.max_radius:.2f} m")
+            self._node.com_ok = True
+            return None  # no more probes needed
+        return best_t 
+
+    # ------------------------------------------------------------------ public
+    def maybe_request_probe(self) -> None:
+        """Call from a timer (e.g. every 0.2 s).  Starts a new round if needed."""
+        if self._round_id < 2: # first two rounds are special
+            t_probe = float(self._round_id) 
+            
+        else: 
+            t_probe = self._next_probe_time()
+            if t_probe is None:                         # envelope tight enough
+                return
+
+        self._round_id += 1
+
+        # Example: starting_points indexed by agent id (1-based)
+        starting_points = [0.25, 0.5, 0.75, 1.0]  # index 0 unused
+
+        # Broadcast the start message to all agents
+        payload = [t_probe, t_probe] + starting_points
+        self._pub.publish(Float64MultiArray(data=payload))      
+
+        
+        self._node.get_logger().info(
+            f"GHS round {self._round_id} @ t={t_probe:.2} and sp={starting_points} rreq")
+
+    def store_radius(self, r: float, rid: float) -> None:
+        """Callback when `/radius` arrives from the swarm root."""
+        for i, (t, _) in enumerate(self._samples):
+            if abs(t - rid) < 1e-8:
+                self._samples[i] = (rid, r)
+                break
+        else:
+            self._samples.append((rid, r))
+        self._samples.sort(key=lambda x: x[0])
+        if r > self.max_radius:
+            self.max_radius = r
+        self._node.get_logger().info(
+            f"Response: r(t={rid:.2}) = {r:.2f} m  "
+            f"(current max {self.max_radius:.2f} m)")
+        print(f"Current samples: {[(round(t, 2), round(r, 2)) for t, r in self._samples]}")
+
 
 
 def main(args=None) -> None:
