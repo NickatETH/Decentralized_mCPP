@@ -1,0 +1,7 @@
+float64 starting_point          # [0,1] position of starting point along the path
+float64 cruise_speed            # [m/s] – constant speed assumed for every segment
+float64 a                       # UAV thrust coefficient
+float64 b                      # UAV drag coefficient
+---
+# Response
+float64 energy                  # [J] Total energy for one lap of the ring

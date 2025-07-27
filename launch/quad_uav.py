@@ -8,7 +8,7 @@ def generate_launch_description():
         '--xmin', '0.0',
         '--ymin', '0.0',
         '--xmax', '50.0',
-        '--ymax', '30.0'
+        '--ymax', '40.0'
     ]
 
     # Four agents with distinct IDs and start positions
