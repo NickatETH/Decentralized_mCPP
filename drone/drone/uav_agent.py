@@ -12,7 +12,7 @@ from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy._rclpy_pybind11 import RCLError        
 
-from std_msgs.msg import String, Float32MultiArray
+from std_msgs.msg import String, Float32MultiArray, Float64MultiArray
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point as RosPoint
 
@@ -22,6 +22,9 @@ from shapely.ops import split
 import matplotlib.pyplot as plt  # for plotting power cell polygons
 
 from interface.srv import ComputeEnergy  # Custom service for energy computation
+
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from geometry_msgs.msg import PointStamped
 
 Coordinate = Tuple[float, float]
 Grid = List[Coordinate]
@@ -42,6 +45,15 @@ color_map = [
     (167/255, 17/255, 122/255),   # ETH Purpur
     (111/255, 111/255, 111/255),  # ETH Grau
 ]
+
+# QoS shortcuts --------------------------------------------------------------
+qos_best_effort  = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT,
+                              durability=DurabilityPolicy.VOLATILE)
+qos_reliable_vol = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
+                              durability=DurabilityPolicy.VOLATILE)
+qos_reliable_tx  = QoSProfile(depth=1,  reliability=ReliabilityPolicy.RELIABLE,
+                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
+
 
 
 class UavAgent(Node):
@@ -74,6 +86,11 @@ class UavAgent(Node):
 
         self.path = []  # Path for STC computation
 
+        self.radius_pos = 0.0 
+        self.nbr_table = {}  
+        self.frag = None
+        self.ghs_level = 0
+
         # Neighbour exchange
         self.nb_pub_ = self.create_publisher(Float32MultiArray, "neighbours", 10)
         self.nb_sub_ = self.create_subscription(
@@ -88,8 +105,14 @@ class UavAgent(Node):
             ComputeEnergy,'~/compute_energyy',         
             self.compute_energy_cb        )
 
+        self.beacon_pub = self.create_publisher(PointStamped, "/beacon", qos_best_effort)
+        self.ghs_pub    = self.create_publisher(Float32MultiArray, "/ghs_packet", qos_reliable_vol)
+        self.radius_pub = self.create_publisher(Float64MultiArray, "/radius", qos_reliable_tx)
+        self.start_sub  = self.create_subscription(Float64MultiArray, "/start_ghs", self.start_cb, qos_reliable_tx)
+        self.packet_sub = self.create_subscription(Float32MultiArray, "/ghs_packet", self.ghs_cb, qos_reliable_vol)
+        self.beacon_sub = self.create_subscription(PointStamped, "/beacon", self.beacon_cb, qos_best_effort)
 
-
+        self.ghs_timer = None  # Timer for GHS probe (started later)
 
 
     def run_loop(self):
@@ -404,13 +427,9 @@ class UavAgent(Node):
         ring = poly.exterior
         return ring
 
-
 # ------------------------------------------------------------------
 # Energy computation
 # ------------------------------------------------------------------
-
-
-
     def _distance(self, p: Tuple[float, float], q: Tuple[float, float]) -> float:
         """Euclidean distance between p and q."""
         return math.dist(p, q)
@@ -482,9 +501,82 @@ class UavAgent(Node):
         return response
     
 
-    
+    # ------------------------------------------------------------------
+    # Beacon I/O
+    # ------------------------------------------------------------------
+    def send_beacon(self):
+        x, y = self.radius_pos
+        msg = PointStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = str(self.uid)
+        msg.point.x, msg.point.y = x, y
+        self.beacon_pub.publish(msg)
+
+    def beacon_cb(self, msg: PointStamped):
+        uid = int(msg.header.frame_id)
+        if uid != self.uid:
+            self.nbr_table[uid] = (msg.point.x, msg.point.y)
+
+    # ------------------------------------------------------------------
+    # Start‑GHS handler
+    # ------------------------------------------------------------------
+    def start_cb(self, msg: Float64MultiArray):
+        t_target, rid = msg.data
+        self.radius_pos = self.path[t_target % len(self.path)].coords  # wrap around
+        self.send_beacon()  # send initial beacon
+        self.frag = FragmentState(self.uid)  # reset fragment state
+        self.get_clock().sleep_for(Duration(seconds=0.1))
+        # start timer for GHS probe
+        self.ghs_timer = self.create_timer(t_target, self._ghs_probe)
 
 
+
+    def _compute_best_out(self):
+        my_p = self.radius_pos
+        best = None
+        # Find the closest neighbour (minimum distance) in nbr_table
+        for nbr_uid, nbr_p in self.nbr_table.items():
+            w = float(np.linalg.norm(np.asarray(self.radius_pos) - np.asarray(nbr_p)))
+            if best is None or w < best[1]:
+                best = (nbr_uid, self.frag)
+        self.frag.best_out = best
+
+    def _send_test(self, rid: int):
+        self._compute_best_out()
+
+        if not self.frag.best_out:
+            return  # isolated
+        nbr, w, level = self.frag.best_out
+        self.frag.waiting_test = nbr
+        pkt = Float32MultiArray(data=[0, rid, self.uid, nbr, self.frag.level, self.frag.frag_id, w])
+        self.ghs_pub.publish(pkt)
+
+    # ------------------------------------------------------------------
+    # GHS packet handler (Test/Accept/Reject/Report)
+    # ------------------------------------------------------------------
+    def ghs_cb(self, msg: Float32MultiArray):
+        typ, rid, src, dst, lvl, fid, weight = msg.data
+        src, dst, lvl, fid = map(int, (src, dst, lvl, fid))
+        if dst != self.uid:
+            return
+        if typ == 0:  # TEST
+            # accept if different fragment else reject ----------------------
+            accept = fid != self.frag.frag_id
+            ans_typ = 1 if accept else 2
+            pkt = Float32MultiArray(data=[ans_typ, rid, self.uid, src, lvl, self.frag.frag_id, weight])
+            self.ghs_pub.publish(pkt)
+            if accept:
+                # merge fragments locally ----------------------------------
+                self.frag.frag_id = min(self.frag.frag_id, fid)
+                self.frag.level   = max(self.frag.level, lvl)
+                # root election simplified – real GHS handles levels -------
+                self.frag.root    = self.uid if self.uid < src else src
+                self.frag.best_out = None  # will recompute on next probe
+                # if I become root I will report the weight ----------------
+                if self.uid == self.frag.root:
+                    pkt_r = Float64MultiArray(data=[weight, rid])
+                    self.radius_pub.publish(pkt_r)
+        # Accept / Reject – demo ignores details for brevity ---------------
                 
 
 
