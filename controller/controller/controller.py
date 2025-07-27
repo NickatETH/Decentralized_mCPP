@@ -2,25 +2,40 @@ import os
 import signal
 import subprocess
 from typing import Dict
+from rclpy.duration import Duration
 
 import rclpy
+import numpy as np
 from rclpy.node import Node
 from interface.srv import ComputeEnergy
+from std_msgs.msg import Float64MultiArray
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from visualization_msgs.msg import Marker  # Add this import
+
 
 
 AGENT_IDS = [1, 2, 3, 4]
 
 AGENT_POSITIONS = {
     1: (0.0, 0.0),
-    2: (10.0, 0.0),
-    3: (10.0, 10.0),
-    4: (5.0, 3.0),
+    2: (50.0, 0.0),
+    3: (50.0, 50.0),
+    4: (5.0, 40.0),
 }
 
 BOUNDARY_ARGS = [
     '--xmin', '0.0', '--ymin', '0.0',
-    '--xmax', '50.0', '--ymax', '12.0',
+    '--xmax', '50.0', '--ymax', '50.0',
 ]
+
+# QoS shortcuts --------------------------------------------------------------
+qos_best_effort  = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT,
+                              durability=DurabilityPolicy.VOLATILE)
+qos_reliable_vol = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
+                              durability=DurabilityPolicy.VOLATILE)
+qos_reliable_tx  = QoSProfile(depth=2,  reliability=ReliabilityPolicy.RELIABLE,
+                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
+
 
 
 def launch_agent(aid: int, x: float, y: float) -> subprocess.Popen:
@@ -47,6 +62,9 @@ class Controller(Node):
         self.cruise_speed = 10.0
         self.a = 1.0
         self.b = 1.0
+        
+        self.com_estimate = False
+        self.coms = 20
 
         # launch agents
         for aid in AGENT_IDS:
@@ -64,6 +82,32 @@ class Controller(Node):
             while not cli.wait_for_service(timeout_sec=1.0):
                 self.get_logger().warn(f'{srv} not up yet, waiting…')
             self._send_request(aid)
+
+        # Request comm range estimation
+        self.rad_timer = None
+        self.start_pub = self.create_publisher(
+            Float64MultiArray, '/start_ghs', qos_reliable_tx)
+        self.radius_sub = self.create_subscription(
+            Float64MultiArray, '/radius', self.radius_cb, qos_reliable_vol)
+        self.radius_marker_pub = self.create_publisher(Marker, '/comm_radius_marker', qos_reliable_tx)
+
+        self.radius_timer = None
+
+    def calculate_radius(self):
+        i = np.random.randint(0, 1000)
+        for aid in AGENT_IDS:
+            sp = np.random.uniform(0, 1)
+            self.start_pub.publish(Float64MultiArray(data=[sp, float(aid), float(i)]))
+        self.get_logger().info(f'Sent radius estimation request for round {i}')
+
+
+    def radius_cb(self, msg: Float64MultiArray):
+        self.coms -= 1
+        radius, rid = msg.data
+        rid = int(rid)
+        self.get_logger().info(f'Result: r(t) = {radius:.2f} m  (rid {rid})')
+
+
 
     # ------------------------------------------------------------------ helpers
     def _send_request(self, aid: int) -> None:
@@ -91,7 +135,7 @@ class Controller(Node):
 
     # ----------------------------------------------------------- main spin loop
     def spin_until_complete(self) -> None:
-        while rclpy.ok() and self._energy_futures_dict:
+        while rclpy.ok() and self._energy_futures_dict or self.com_estimate:
             rclpy.spin_once(self, timeout_sec=0.1)
             done = []
             for aid, fut in self._energy_futures_dict.items():
@@ -110,6 +154,10 @@ class Controller(Node):
                     done.append(aid)
             for aid in done:
                 del self._energy_futures_dict[aid]
+        self.get_logger().info('All energy requests done, waiting for comm radius estimation...')
+        while self.coms > 0 and rclpy.ok():
+            self.calculate_radius()
+            rclpy.spin_once(self, timeout_sec=0.2)
         self._shutdown_agents()
 
 

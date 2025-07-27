@@ -51,10 +51,10 @@ qos_best_effort  = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFOR
                               durability=DurabilityPolicy.VOLATILE)
 qos_reliable_vol = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
                               durability=DurabilityPolicy.VOLATILE)
-qos_reliable_tx  = QoSProfile(depth=1,  reliability=ReliabilityPolicy.RELIABLE,
+qos_reliable_tx  = QoSProfile(depth=2,  reliability=ReliabilityPolicy.RELIABLE,
                               durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
-
+GHS_TEST, GHS_ACCEPT, GHS_REJECT, GHS_REPORT = 0, 1, 2, 3
 
 class UavAgent(Node):
     """ROS 2 node representing a UAV that exchanges position/weight with
@@ -86,10 +86,10 @@ class UavAgent(Node):
 
         self.path = []  # Path for STC computation
 
-        self.radius_pos = 0.0 
+        self.radius_pos = (0.0, 0.0) 
+        self.starting_point = 0.0
         self.nbr_table = {}  
-        self.frag = None
-        self.ghs_level = 0
+        self.frag = FragmentState(self.agent_id)  # reset fragment state
 
         # Neighbour exchange
         self.nb_pub_ = self.create_publisher(Float32MultiArray, "neighbours", 10)
@@ -107,7 +107,7 @@ class UavAgent(Node):
 
         self.beacon_pub = self.create_publisher(PointStamped, "/beacon", qos_best_effort)
         self.ghs_pub    = self.create_publisher(Float32MultiArray, "/ghs_packet", qos_reliable_vol)
-        self.radius_pub = self.create_publisher(Float64MultiArray, "/radius", qos_reliable_tx)
+        self.radius_pub = self.create_publisher(Float64MultiArray, "/radius", qos_reliable_vol)
         self.start_sub  = self.create_subscription(Float64MultiArray, "/start_ghs", self.start_cb, qos_reliable_tx)
         self.packet_sub = self.create_subscription(Float32MultiArray, "/ghs_packet", self.ghs_cb, qos_reliable_vol)
         self.beacon_sub = self.create_subscription(PointStamped, "/beacon", self.beacon_cb, qos_best_effort)
@@ -360,7 +360,6 @@ class UavAgent(Node):
         assert inside, "No grid cells found inside the polygon"
         return inside
 
-
     def _adjacency(self, cells: Iterable[Coordinate]) -> Dict[Coordinate, List[Coordinate]]:
         """Return the 4‑neighbour adjacency list of *cells*."""
         cell_set = set(cells)
@@ -373,7 +372,6 @@ class UavAgent(Node):
                     nbrs[(x, y)].append(n)
 
         return nbrs
-
 
     def compute_stc(self, cells: Grid) -> Grid:
         """Compute a deterministic **Spanning‑Tree Coverage (STC)** tour over *cells*.
@@ -402,7 +400,6 @@ class UavAgent(Node):
 
         dfs(root)
         return tour
-
 
     def offset_stc_path(self, stc_path: Grid, cell_size: float) -> Grid:
         """Return a smooth, closed offset path surrounding *stc_path*.
@@ -434,7 +431,6 @@ class UavAgent(Node):
         """Euclidean distance between p and q."""
         return math.dist(p, q)
 
-
     def _angle_between(self, v1: Tuple[float, float], v2: Tuple[float, float]) -> float:
         """Return the unsigned angle (rad) between two 2‑D vectors v1 and v2.
         Z is ignored (assumes fairly level flight)."""
@@ -447,7 +443,6 @@ class UavAgent(Node):
         # Clamp to protect against numerical error
         cos_theta = max(-1.0, min(1.0, dot / norm_prod))
         return math.acos(cos_theta)
-
 
     def compute_energy_cb(self, request, response) -> float:
         """Return the total energy (J) required to fly one lap of *ring* at a
@@ -508,26 +503,48 @@ class UavAgent(Node):
         x, y = self.radius_pos
         msg = PointStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = str(self.uid)
+        msg.header.frame_id = str(self.agent_id)
         msg.point.x, msg.point.y = x, y
         self.beacon_pub.publish(msg)
 
     def beacon_cb(self, msg: PointStamped):
-        uid = int(msg.header.frame_id)
-        if uid != self.uid:
+        uid = int(float(msg.header.frame_id))
+        if uid != self.agent_id:
             self.nbr_table[uid] = (msg.point.x, msg.point.y)
 
     # ------------------------------------------------------------------
     # Start‑GHS handler
     # ------------------------------------------------------------------
     def start_cb(self, msg: Float64MultiArray):
-        t_target, rid = msg.data
-        self.radius_pos = self.path[t_target % len(self.path)].coords  # wrap around
+        data = msg.data
+        # Sanity check
+        if len(data) % 3 != 0:
+            self.get_logger().error(f"start_cb: expected multiples of 3, got {len(data)} elements")
+            print(f"start_cb: data = {data}")
+            return
+
+        self.starting_point, aid_f, rid = data
+
+        # Ignore sp for other agents
+        if int(aid_f) != int(self.agent_id):
+            return
+
+        # ---------- SAFE INDEXING ----------
+        coords = list(self.path.coords)       
+        if not coords:
+            self.get_logger().error("start_cb: path is empty")
+            return
+
+        idx = int(round(float(self.starting_point) * (len(coords) - 1))) % len(coords)
+        x, y = coords[idx]
+        # Store as tuple or shapely Point:
+        self.radius_pos = (x, y)                   # or Point(x, y)
+
         self.send_beacon()  # send initial beacon
-        self.frag = FragmentState(self.uid)  # reset fragment state
+        self.frag = FragmentState(self.agent_id)  # reset fragment state
         self.get_clock().sleep_for(Duration(seconds=0.1))
-        # start timer for GHS probe
-        self.ghs_timer = self.create_timer(t_target, self._ghs_probe)
+        # start timer for GHS probe ( required for asynchronous operation )
+        self.ghs_timer = self.create_timer(0.5,lambda: self._send_test(int(rid)))
 
 
 
@@ -538,17 +555,19 @@ class UavAgent(Node):
         for nbr_uid, nbr_p in self.nbr_table.items():
             w = float(np.linalg.norm(np.asarray(self.radius_pos) - np.asarray(nbr_p)))
             if best is None or w < best[1]:
-                best = (nbr_uid, self.frag)
+                best = (nbr_uid, w)
         self.frag.best_out = best
 
     def _send_test(self, rid: int):
         self._compute_best_out()
+        if self.ghs_timer is not None:
+            self.ghs_timer.cancel()  # stop timer
 
         if not self.frag.best_out:
             return  # isolated
-        nbr, w, level = self.frag.best_out
+        nbr, w = self.frag.best_out
         self.frag.waiting_test = nbr
-        pkt = Float32MultiArray(data=[0, rid, self.uid, nbr, self.frag.level, self.frag.frag_id, w])
+        pkt = Float32MultiArray(data=[0, rid, self.agent_id, nbr, self.frag.level, self.frag.frag_id, w])
         self.ghs_pub.publish(pkt)
 
     # ------------------------------------------------------------------
@@ -557,28 +576,93 @@ class UavAgent(Node):
     def ghs_cb(self, msg: Float32MultiArray):
         typ, rid, src, dst, lvl, fid, weight = msg.data
         src, dst, lvl, fid = map(int, (src, dst, lvl, fid))
-        if dst != self.uid:
+        if dst != self.agent_id:
             return
-        if typ == 0:  # TEST
+        if typ == 0:            # TEST
             # accept if different fragment else reject ----------------------
             accept = fid != self.frag.frag_id
             ans_typ = 1 if accept else 2
-            pkt = Float32MultiArray(data=[ans_typ, rid, self.uid, src, lvl, self.frag.frag_id, weight])
+            pkt = Float32MultiArray(data=[ans_typ, rid, self.agent_id, src, lvl, self.frag.frag_id, weight])
             self.ghs_pub.publish(pkt)
             if accept:
-                # merge fragments locally ----------------------------------
-                self.frag.frag_id = min(self.frag.frag_id, fid)
-                self.frag.level   = max(self.frag.level, lvl)
-                # root election simplified – real GHS handles levels -------
-                self.frag.root    = self.uid if self.uid < src else src
-                self.frag.best_out = None  # will recompute on next probe
-                # if I become root I will report the weight ----------------
-                if self.uid == self.frag.root:
-                    pkt_r = Float64MultiArray(data=[weight, rid])
-                    self.radius_pub.publish(pkt_r)
-        # Accept / Reject – demo ignores details for brevity ---------------
+                self._merge_fragments(lvl, fid, weight)
+                # remember that src is now my child
+                self.frag.add_child(src)
+                self.frag.waiting_test = None
+                # if I have no other children, report immediately
+                if self.frag.save_report(src):
+                    self._report_up(weight, rid)
+
+        elif typ == 1:         # ACCEPT
+             if src == self.frag.waiting_test:
+                # edge (self.agent_id, src) becomes BRANCH; report to parent/root
+                self.frag.add_child(src)
+                self.frag.waiting_test = None
+                if self.frag.save_report(src):
+                    self._report_up(weight, rid)
+
+        elif typ == 2:         # REJECT
+            if src == self.frag.waiting_test:
+                # try the next‑best edge in neighbour list
+                self.frag.waiting_test = None
+                self._send_test(rid)
+
+        elif typ == 3:  # REPORT
+            w_child = weight
+            if self.frag.best_out is None or w_child < self.frag.best_out[1]:
+                self.frag.best_out = (src, w_child)
+            # store child report; if everyone done, bubble upward
+            if self.frag.save_report(src):
+                self._report_up(self.frag.best_out[1], rid)
+                
+                
+                
+    # REPORT helper – bubble fragment MWOE to root
+    def _report_up(self, w: float, rid: int):
+        if self.frag.root == self.agent_id:          # I'm root → decide radius
+            pkt_r = Float64MultiArray(data=[w, rid])
+            self.radius_pub.publish(pkt_r)
+        else:                                   # send REPORT to parent
+            pkt = Float32MultiArray(data=[3, rid, self.agent_id,
+                                          self.frag.parent_uid, 0,
+                                          self.frag.frag_id, w])
+            self.ghs_pub.publish(pkt)
+
+  
+
+    # ----------------------------------------------------------------------
+    # fragment‑merge rule (called inside TEST accept branch)
+    # ----------------------------------------------------------------------
+    def _merge_fragments(self, other_level: int, other_fid: int, edge_w: float):
+        if self.frag.level == other_level:
+            # equal levels → new level +1, new frag‑ID = core edge ID
+            self.frag.level += 1
+            self.frag.frag_id = int(edge_w)     # any deterministic ID works
+        elif other_level > self.frag.level:
+            # absorb into higher‑level fragment
+            self.frag.level = other_level
+            self.frag.frag_id = other_fid
+        self.frag.best_out = None  # reset best_out
+        self.frag.waiting_test = None  # reset waiting_test
                 
 
+class FragmentState:
+    def __init__(self, uid):
+        self.frag_id = uid
+        self.level = 0
+        self.root = uid
+        self.parent_uid: int | None = None
+        self.best_out = None
+        self.waiting_test = None
+        self._expected_reports: set[int] = set()
+        self._got_reports: set[int] = set()
+
+    def add_child(self, child_uid: int) -> None:
+        self._expected_reports.add(child_uid)
+
+    def save_report(self, child_uid: int) -> bool:
+        self._got_reports.add(child_uid)
+        return self._expected_reports.issubset(self._got_reports)
 
 
 # ------------------------------------------------------------------
