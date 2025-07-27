@@ -24,6 +24,12 @@ Mohamed Samshad and Ketan Rajawat
 ---
 
 ## Usage
+```bash 
+ros2 run controller controller
+```
+
+or 
 
 ```bash
-python3 main.py
+ros2 launch launch/quad_uav.py
+```
