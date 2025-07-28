@@ -62,7 +62,6 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
     def run_loop(self):
         """Run the agent's main loop, asking for neighbours and balancing power cells."""
         self.ask_for_neighbours(response=1.0)  # Ask for neighbours
-        self.get_clock().sleep_for(Duration(seconds=0.05))
         self.balance_power_cells()
 
     def run_stc(self):

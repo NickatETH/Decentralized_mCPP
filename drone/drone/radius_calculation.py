@@ -26,6 +26,15 @@ qos_reliable_tx = QoSProfile(
     durability=DurabilityPolicy.TRANSIENT_LOCAL,
 )
 
+qos_reliable_vol_lifetime = QoSProfile(
+    depth=10,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.VOLATILE,
+    lifespan=Duration(
+        seconds=0, nanoseconds=300_000_000
+    ),  # 0.3 seconds = 300,000,000 ns
+)
+
 
 class RadiusMixin:
 
@@ -42,16 +51,16 @@ class RadiusMixin:
             PointStamped, "/beacon", qos_best_effort
         )
         self.ghs_pub = self.create_publisher(
-            Float32MultiArray, "/ghs_packet", qos_reliable_tx
+            Float32MultiArray, "/ghs_packet", qos_reliable_vol_lifetime
         )
         self.radius_pub = self.create_publisher(
             Float64MultiArray, "/radius", qos_reliable_vol
         )
         self.start_sub = self.create_subscription(
-            Float64MultiArray, "/start_ghs", self.start_cb, qos_reliable_tx
+            Float64MultiArray, "/start_ghs", self.start_cb, qos_best_effort
         )
         self.packet_sub = self.create_subscription(
-            Float32MultiArray, "/ghs_packet", self.ghs_cb, qos_reliable_tx
+            Float32MultiArray, "/ghs_packet", self.ghs_cb, qos_reliable_vol_lifetime
         )
         self.beacon_sub = self.create_subscription(
             PointStamped, "/beacon", self.beacon_cb, qos_best_effort
@@ -62,6 +71,20 @@ class RadiusMixin:
     def prep_radiusmixin(self, agent_id: float):
         """Reset the radius position and ID."""
         self.frag = FragmentState(agent_id)
+
+    def reset_radius(self):
+        """Reset the radius position and fragment state."""
+        self.frag = FragmentState(self.agent_id)
+        self.radius_pos = (0.0, 0.0)
+        self.starting_point = 0.0
+        self.nbr_table.clear()
+        self.stop_all = False
+        self.packet_sub = self.create_subscription(
+            Float32MultiArray, "/ghs_packet", self.ghs_cb, qos_best_effort
+        )
+        self.beacon_sub = self.create_subscription(
+            PointStamped, "/beacon", self.beacon_cb, qos_best_effort
+        )
 
     # Beacon I/O
     def send_beacon(self):
@@ -85,7 +108,7 @@ class RadiusMixin:
             [t_target, rid, sp0, sp1, sp2, ...]
         Only the tuple addressed to *this* agent is processed.
         """
-        print("\n  \n")
+        self.reset_radius()  # Reset radius state
         data = msg.data
         if len(data) < 2:
             self.get_logger().error("start_cb: message too short")
@@ -107,6 +130,9 @@ class RadiusMixin:
         self.frag = FragmentState(self.agent_id)  # reset fragment state
         self.get_clock().sleep_for(Duration(seconds=0.1))
         self.ghs_timer = self.create_timer(0.1, lambda: self._report_best(rid))
+        print(
+            f"Starting GHS with radius {rid} at position {self.agent_id} {self.radius_pos}"
+        )
 
     def _compute_best_out(self):
         # 1) collect all neighbours except your own fragment
@@ -126,7 +152,16 @@ class RadiusMixin:
                 idx
             ]  # pick the “next best” un‐tried neighbour
         else:
-            print(f"Agent {self.agent_id} has no more neighbours to try: {neighbours}")
+
+            now = self.get_clock().now().nanoseconds
+            if not hasattr(self, "_last_log"):
+                self._last_log = 0
+            if now - self._last_log > 1 * 1e9:  # 5 seconds in nanoseconds
+                self.get_logger().info(
+                    f"Agent {self.agent_id} has no more neighbours to try: {neighbours}"
+                )
+                self._last_log = now
+
             self.frag.nbr_iter = 0  # reset neighbour iteration
 
     def _report_best(self, rid: float):
@@ -184,9 +219,9 @@ class RadiusMixin:
                         ]
                     )
                 else:
-                    print(
-                        f"Agent {self.agent_id} has no best_out candidate to accept/reject."
-                    )
+                    # print(
+                    #     f"Agent {self.agent_id} has no best_out candidate to accept/reject."
+                    # )
                     return
                 self.ghs_pub.publish(pkt)
 

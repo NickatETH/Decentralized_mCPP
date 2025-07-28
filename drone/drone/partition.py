@@ -5,6 +5,7 @@ from std_msgs.msg import Float32MultiArray
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point as RosPoint
 from typing import Tuple, List
+from rclpy.duration import Duration
 
 color_map = [
     (33 / 255, 92 / 255, 175 / 255),  # ETH Blau
@@ -24,9 +25,9 @@ class PartitionMixin:
         super().__init__()
         self.position = (0.0, 0.0)  # Initial position (x, y)
         self.weight = 0.0
-        self.GAMMA = 0.001
+        self.GAMMA = 0.01
         self.converged = 0.0  # False
-        self.TOLERANCE = 0.05
+        self.TOLERANCE = 0.075
         self.boundary = None
 
         self.polygon = None  # Polygon of current power cell
@@ -153,6 +154,12 @@ class PartitionMixin:
 
     def balance_power_cells(self) -> None:
         """Adjust agent weights until power‑cell areas equalise within tolerance."""
+        # wait for the next 50ms in ros time
+        now = self.get_clock().now()
+        sleep_ns = 100_000_000 - (now.nanoseconds % 100_000_000)
+        if sleep_ns < 100_000_000:
+            self.get_clock().sleep_for(Duration(nanoseconds=sleep_ns))
+
         cell = self.compute_power_cell()
         if len(self.neighbours) == 0:
             self.get_logger().warn("No neighbours found, cannot balance power cells.")
@@ -215,6 +222,6 @@ class PartitionMixin:
         else:
             self.converged = 0.0
             self.weight = self.weight - self.GAMMA * (self.polygon.area - target_area)
-            self.weight = max(-50, min(self.weight, 50.0))
+            self.weight = max(-10, min(self.weight, 10.0))
 
         return
