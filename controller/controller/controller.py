@@ -13,7 +13,6 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from visualization_msgs.msg import Marker  # Add this import
 
 
-
 AGENT_IDS = [1, 2, 3, 4]
 
 AGENT_POSITIONS = {
@@ -24,48 +23,68 @@ AGENT_POSITIONS = {
 }
 
 BOUNDARY_ARGS = [
-    '--xmin', '0.0', '--ymin', '0.0',
-    '--xmax', '50.0', '--ymax', '50.0',
+    "--xmin",
+    "0.0",
+    "--ymin",
+    "0.0",
+    "--xmax",
+    "50.0",
+    "--ymax",
+    "50.0",
 ]
 
 # QoS shortcuts --------------------------------------------------------------
-qos_best_effort  = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT,
-                              durability=DurabilityPolicy.VOLATILE)
-qos_reliable_vol = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE,
-                              durability=DurabilityPolicy.VOLATILE)
-qos_reliable_tx  = QoSProfile(depth=2,  reliability=ReliabilityPolicy.RELIABLE,
-                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
-
+qos_best_effort = QoSProfile(
+    depth=10,
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    durability=DurabilityPolicy.VOLATILE,
+)
+qos_reliable_vol = QoSProfile(
+    depth=10,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.VOLATILE,
+)
+qos_reliable_tx = QoSProfile(
+    depth=2,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
 
 
 def launch_agent(aid: int, x: float, y: float) -> subprocess.Popen:
     cmd = [
-        'ros2', 'run', 'drone', 'uav_agent',
-        '--agent_id', str(aid), '--posx', str(x), '--posy', str(y),
+        "ros2",
+        "run",
+        "drone",
+        "uav_agent",
+        "--agent_id",
+        str(aid),
+        "--num_agents",
+        str(len(AGENT_IDS)),
+        "--posx",
+        str(x),
+        "--posy",
+        str(y),
         *BOUNDARY_ARGS,
     ]
-    return subprocess.Popen(cmd,                # POSIX
-                            preexec_fn=os.setsid)
+    return subprocess.Popen(cmd, preexec_fn=os.setsid)  # POSIX
 
 
 class Controller(Node):
     def __init__(self) -> None:
-        super().__init__('controller')
+        super().__init__("controller")
         self.start_pub = self.create_publisher(
-            Float64MultiArray, '/start_ghs', qos_reliable_tx)
+            Float64MultiArray, "/start_ghs", qos_reliable_tx
+        )
         self.radius_sub = self.create_subscription(
-            Float64MultiArray, '/radius', self.radius_cb, qos_reliable_vol)
-        self.radius_marker_pub = self.create_publisher(Marker, '/comm_radius_marker', qos_reliable_tx)
+            Float64MultiArray, "/radius", self.radius_cb, qos_reliable_vol
+        )
+        self.radius_marker_pub = self.create_publisher(
+            Marker, "/comm_radius_marker", qos_reliable_tx
+        )
         self.radius_timer = None
 
-
-
-        self.scheduler = RadiusScheduler(self,
-                                    self.start_pub,
-                                    v_max=10.0,
-                                    eps=0.01)
-        
-
+        self.scheduler = RadiusScheduler(self, self.start_pub, v_max=10.0, eps=0.01)
 
         # don’t collide with Node internals!
         self._energy_clients_dict: Dict[int, rclpy.client.Client] = {}
@@ -77,7 +96,7 @@ class Controller(Node):
         self.cruise_speed = 10.0
         self.a = 1.0
         self.b = 1.0
-        
+
         self.com_estimate = False
         self.com_ok = False
 
@@ -86,26 +105,21 @@ class Controller(Node):
             x, y = AGENT_POSITIONS[aid]
             proc = launch_agent(aid, x, y)
             self._agent_procs[aid] = proc
-            self.get_logger().info(f'Launched uav_agent_{aid} (pid {proc.pid})')
+            self.get_logger().info(f"Launched uav_agent_{aid} (pid {proc.pid})")
 
         # create service clients and send first request
         for aid in AGENT_IDS:
-            srv = f'/uav_agent_{aid}/compute_energyy'
+            srv = f"/uav_agent_{aid}/compute_energy"
             cli = self.create_client(ComputeEnergy, srv)
             self._energy_clients_dict[aid] = cli
-            self.get_logger().info(f'Waiting for {srv} …')
+            self.get_logger().info(f"Waiting for {srv} …")
             while not cli.wait_for_service(timeout_sec=1.0):
-                self.get_logger().warn(f'{srv} not up yet, waiting…')
+                self.get_logger().warn(f"{srv} not up yet, waiting…")
             self._send_request(aid)
-
-
-
 
     def radius_cb(self, msg: Float64MultiArray):
         r, rid = msg.data
         self.scheduler.store_radius(r, rid)
-
-
 
     # ------------------------------------------------------------------ helpers
     def _send_request(self, aid: int) -> None:
@@ -120,12 +134,12 @@ class Controller(Node):
         """Politely stop every launched uav_agent; force‑kill if they ignore us."""
         for aid, proc in self._agent_procs.items():
             if proc.poll() is not None:
-                continue                              # already gone
+                continue  # already gone
 
-            self.get_logger().info(f'Shutting uav_agent_{aid}')
+            self.get_logger().info(f"Shutting uav_agent_{aid}")
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)  # POSIX
-                proc.wait(timeout=3)                  # wait up to 3 s
+                proc.wait(timeout=3)  # wait up to 3 s
             except (subprocess.TimeoutExpired, ProcessLookupError):
                 # Still alive?  Brutal exit.
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -142,17 +156,21 @@ class Controller(Node):
                         res = fut.result()
                         if res.energy == -1.0:
                             self.get_logger().warn(
-                                f'Agent {aid}: path not ready – retrying')
+                                f"Agent {aid}: path not ready – retrying"
+                            )
                             self._send_request(aid)
                             continue
                         self.get_logger().info(
-                            f'Agent {aid}: Energy = {res.energy:.2f} J')
+                            f"Agent {aid}: Energy = {res.energy:.2f} J"
+                        )
                     except Exception as exc:
-                        self.get_logger().error(f'Agent {aid} failed: {exc}')
+                        self.get_logger().error(f"Agent {aid} failed: {exc}")
                     done.append(aid)
             for aid in done:
                 del self._energy_futures_dict[aid]
-        self.get_logger().info('All energy requests done, waiting for comm radius estimation...')
+        self.get_logger().info(
+            "All energy requests done, waiting for comm radius estimation..."
+        )
         self.scheduler.maybe_request_probe()
         self.radius_timer = self.create_timer(5.0, self.scheduler.maybe_request_probe)
         while not self.com_ok and rclpy.ok():
@@ -160,27 +178,25 @@ class Controller(Node):
         self.scheduler.visualize_samples()
         self._shutdown_agents()
 
-    
-
-
-
-
 
 class RadiusScheduler:
     """Minimal Shubert–Piyavskii sampler for r(t) with L = 2 · v_max."""
 
-    def __init__(self, node: rclpy.node.Node,
-                 start_pub,                 # the existing publisher
-                 v_max: float,              # worst‑case UAV speed [m/s]
-                 eps: float = 2.0):         # desired accuracy   [m]
-        self._node      = node
-        self._pub       = start_pub
-        self._L         = 2.0 * v_max
-        self._eps       = eps
-        self._round_id  = 0
+    def __init__(
+        self,
+        node: rclpy.node.Node,
+        start_pub,  # the existing publisher
+        v_max: float,  # worst‑case UAV speed [m/s]
+        eps: float = 2.0,
+    ):  # desired accuracy   [m]
+        self._node = node
+        self._pub = start_pub
+        self._L = 2.0 * v_max
+        self._eps = eps
+        self._round_id = 0
         # (t,r) pairs already measured; endpoints hold +∞ until sampled
         self._samples = [(0.0, 0.0), (1.0, 0.0)]
-        self.max_radius = 0.0               # highest r(t) seen so far
+        self.max_radius = 0.0  # highest r(t) seen so far
 
     # ------------------------------------------------------------------ helpers
     def _roof(self, t: float) -> float:
@@ -192,24 +208,26 @@ class RadiusScheduler:
         best_gap, best_t = 0.0, None
         for (t0, r0), (t1, r1) in zip(self._samples, self._samples[1:]):
             t_mid = 0.5 * (t0 + t1)
-            gap   = self._roof(t_mid) - 0.5 * (r0 + r1)
+            gap = self._roof(t_mid) - 0.5 * (r0 + r1)
             if gap > best_gap:
                 best_gap, best_t = gap, t_mid
-        if best_gap < self._eps: 
-            self._node.get_logger().info(f"Final max radius: {self.max_radius:.2f} m, gap = {best_gap:.2f} m")
+        if best_gap < self._eps:
+            self._node.get_logger().info(
+                f"Final max radius: {self.max_radius:.2f} m, gap = {best_gap:.2f} m"
+            )
             self._node.com_ok = True
             return None  # no more probes needed
-        return best_t 
+        return best_t
 
     # ------------------------------------------------------------------ public
     def maybe_request_probe(self) -> None:
         """Call from a timer (e.g. every 0.2 s).  Starts a new round if needed."""
-        if self._round_id < 2: # first two rounds are special
-            t_probe = float(self._round_id) 
-            
-        else: 
+        if self._round_id < 2:  # first two rounds are special
+            t_probe = float(self._round_id)
+
+        else:
             t_probe = self._next_probe_time()
-            if t_probe is None:                         # envelope tight enough
+            if t_probe is None:  # envelope tight enough
                 return
 
         self._round_id += 1
@@ -219,11 +237,11 @@ class RadiusScheduler:
 
         # Broadcast the start message to all agents
         payload = [t_probe, t_probe] + starting_points
-        self._pub.publish(Float64MultiArray(data=payload))      
+        self._pub.publish(Float64MultiArray(data=payload))
 
-        
         self._node.get_logger().info(
-            f"GHS round {self._round_id} @ t={t_probe:.2} and sp={starting_points} rreq")
+            f"GHS round {self._round_id} @ t={t_probe:.2} and sp={starting_points} rreq"
+        )
 
     def store_radius(self, r: float, rid: float) -> None:
         """Callback when `/radius` arrives from the swarm root."""
@@ -238,29 +256,29 @@ class RadiusScheduler:
             self.max_radius = r
         self._node.get_logger().info(
             f"Response: r(t={rid:.2}) = {r:.2f} m  "
-            f"(current max {self.max_radius:.2f} m)")
+            f"(current max {self.max_radius:.2f} m)"
+        )
         # print(f"Current samples: {[(round(t, 2), round(r, 2)) for t, r in self._samples]}")
-
 
     def visualize_samples(self) -> None:
         """Visualize the current samples as a plot."""
         import matplotlib.pyplot as plt
-        import matplotlib.patches as patches    
+        import matplotlib.patches as patches
+
         t_values = [t for t, r in self._samples]
         r_values = [r for t, r in self._samples]
         plt.figure(figsize=(10, 6))
-        plt.plot(t_values, r_values, marker='o', label='Samples')
-        plt.title('Radius Samples Over Time')
-        plt.xlabel('Time (s)')
-        plt.ylabel('Radius (m)')
+        plt.plot(t_values, r_values, marker="o", label="Samples")
+        plt.title("Radius Samples Over Time")
+        plt.xlabel("Time (s)")
+        plt.ylabel("Radius (m)")
         plt.grid()
         plt.legend()
         plt.xlim(0, 1)
         plt.ylim(0, max(r_values) + 5)
-        plt.axhline(y=self.max_radius, color='r', linestyle='--', label='Max Radius')
+        plt.axhline(y=self.max_radius, color="r", linestyle="--", label="Max Radius")
         plt.legend()
         plt.show()
-
 
 
 def main(args=None) -> None:
@@ -273,5 +291,5 @@ def main(args=None) -> None:
         rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
