@@ -153,10 +153,15 @@ class Controller(Node):
             for aid in done:
                 del self._energy_futures_dict[aid]
         self.get_logger().info('All energy requests done, waiting for comm radius estimation...')
-        self.radius_timer = self.create_timer(3.0, self.scheduler.maybe_request_probe)
+        self.scheduler.maybe_request_probe()
+        self.radius_timer = self.create_timer(5.0, self.scheduler.maybe_request_probe)
         while not self.com_ok and rclpy.ok():
             rclpy.spin_once(self, timeout_sec=0.5)
+        self.scheduler.visualize_samples()
         self._shutdown_agents()
+
+    
+
 
 
 
@@ -191,7 +196,7 @@ class RadiusScheduler:
             if gap > best_gap:
                 best_gap, best_t = gap, t_mid
         if best_gap < self._eps: 
-            self._node.get_logger().info(f"Final max radius: {self.max_radius:.2f} m")
+            self._node.get_logger().info(f"Final max radius: {self.max_radius:.2f} m, gap = {best_gap:.2f} m")
             self._node.com_ok = True
             return None  # no more probes needed
         return best_t 
@@ -234,7 +239,27 @@ class RadiusScheduler:
         self._node.get_logger().info(
             f"Response: r(t={rid:.2}) = {r:.2f} m  "
             f"(current max {self.max_radius:.2f} m)")
-        print(f"Current samples: {[(round(t, 2), round(r, 2)) for t, r in self._samples]}")
+        # print(f"Current samples: {[(round(t, 2), round(r, 2)) for t, r in self._samples]}")
+
+
+    def visualize_samples(self) -> None:
+        """Visualize the current samples as a plot."""
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as patches    
+        t_values = [t for t, r in self._samples]
+        r_values = [r for t, r in self._samples]
+        plt.figure(figsize=(10, 6))
+        plt.plot(t_values, r_values, marker='o', label='Samples')
+        plt.title('Radius Samples Over Time')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Radius (m)')
+        plt.grid()
+        plt.legend()
+        plt.xlim(0, 1)
+        plt.ylim(0, max(r_values) + 5)
+        plt.axhline(y=self.max_radius, color='r', linestyle='--', label='Max Radius')
+        plt.legend()
+        plt.show()
 
 
 
