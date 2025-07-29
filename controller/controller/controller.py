@@ -9,17 +9,15 @@ from interface.srv import ComputeEnergy
 from std_msgs.msg import Float64MultiArray, Empty
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from visualization_msgs.msg import Marker  # Add this import
-from radius_scheduler import RadiusScheduler
-from thompson_scheduler import ThompsonScheduler
+from .radius_scheduler import RadiusScheduler
+from .thompson_scheduler import ThompsonScheduler
+import random
 
+NUM_AGENTS = 5
 
-AGENT_IDS = [1, 2, 3, 4]
-
+AGENT_IDS = list(range(1, NUM_AGENTS + 1))
 AGENT_POSITIONS = {
-    1: (0.0, 0.0),
-    2: (50.0, 0.0),
-    3: (50.0, 50.0),
-    4: (5.0, 40.0),
+    aid: (random.uniform(0, 50), random.uniform(0, 50)) for aid in AGENT_IDS
 }
 
 BOUNDARY_ARGS = [
@@ -126,6 +124,9 @@ class Controller(Node):
             while not cli.wait_for_service(timeout_sec=0.1):
                 self.get_logger().warn(f"{srv} not up yet, waiting…")
 
+    def _on_bo_result(self, msg: Float64MultiArray) -> None:
+        self.get_logger().info("Received BO result")
+
     def calculate_energy(self, aid: int) -> None:
         """
         Fire off all UAV energy requests in parallel and return the sum.
@@ -154,88 +155,6 @@ class Controller(Node):
 
     def shutdown_agents(self) -> None:
         self.kill_agent_pub.publish(Empty())
-
-
-class RadiusScheduler:
-    """Minimal Shubert–Piyavskii sampler for r(t) with L = 2 · v_max."""
-
-    def __init__(
-        self,
-        node: rclpy.node.Node,
-        start_pub,  # the existing publisher
-        v_max: float,  # worst‑case UAV speed [m/s]
-        eps: float = 2.0,
-    ):  # desired accuracy   [m]
-        self._node = node
-        self._pub = start_pub
-        self._L = 2.0 * v_max
-        self._eps = eps
-        self._round_id = 0
-        # (t,r) pairs already measured; endpoints hold +∞ until sampled
-        self._samples = [(0.0, 0.0), (1.0, 0.0)]
-        self.max_radius = 0.0  # highest r(t) seen so far
-
-    # ------------------------------------------------------------------ helpers
-    def _roof(self, t: float) -> float:
-        """Upper envelope U(t) = min_k ( r_k + L |t - t_k| )."""
-        return min(r + self._L * abs(t - tk) for tk, r in self._samples)
-
-    def _next_probe_time(self) -> float | None:
-        """Return the t where the gap between roof and chord is biggest."""
-        best_gap, best_t = 0.0, None
-        for (t0, r0), (t1, r1) in zip(self._samples, self._samples[1:]):
-            t_mid = 0.5 * (t0 + t1)
-            gap = self._roof(t_mid) - 0.5 * (r0 + r1)
-            if gap > best_gap:
-                best_gap, best_t = gap, t_mid
-        if best_gap < self._eps:
-            self._node.get_logger().info(
-                f"Final max radius: {self.max_radius:.2f} m, gap = {best_gap:.2f} m"
-            )
-            self._node.com_ok = True
-            return None  # no more probes needed
-        return best_t
-
-    # ------------------------------------------------------------------ public
-    def maybe_request_probe(self) -> None:
-        """Call from a timer (e.g. every 0.2 s).  Starts a new round if needed."""
-        if self._round_id < 2:  # first two rounds are special
-            t_probe = float(self._round_id)
-
-        else:
-            t_probe = self._next_probe_time()
-            if t_probe is None:  # envelope tight enough
-                return
-
-        self._round_id += 1
-
-        # Example: starting_points indexed by agent id (1-based)
-        starting_points = [0.25, 0.5, 0.75, 1.0]  # index 0 unused
-
-        # Broadcast the start message to all agents
-        payload = [t_probe, t_probe] + starting_points
-        self._pub.publish(Float64MultiArray(data=payload))
-
-        self._node.get_logger().info(
-            f"GHS round {self._round_id} @ t={t_probe:.2} and sp={starting_points} rreq"
-        )
-
-    def store_radius(self, r: float, rid: float) -> None:
-        """Callback when `/radius` arrives from the swarm root."""
-        for i, (t, _) in enumerate(self._samples):
-            if abs(t - rid) < 1e-8:
-                self._samples[i] = (rid, r)
-                break
-        else:
-            self._samples.append((rid, r))
-        self._samples.sort(key=lambda x: x[0])
-        if r > self.max_radius:
-            self.max_radius = r
-        self._node.get_logger().info(
-            f"Response: r(t={rid:.2}) = {r:.2f} m  "
-            f"(current max {self.max_radius:.2f} m)"
-        )
-        # print(f"Current samples: {[(round(t, 2), round(r, 2)) for t, r in self._samples]}")
 
     def run_bayes_opt(self):
         while True:

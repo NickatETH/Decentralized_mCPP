@@ -54,15 +54,9 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
         self.boundary = boundary  # Polygon defining the boundary of the area
 
         self.prep_radiusmixin(agent_id)  # Initialize radius mixin
-        self.reset_partition(position=position, weight=0.0, polygon=self.boundary)
 
-        self.ask_for_neighbours(response=1.0)  # Initial broadcast
-        self.pb_timer = self.create_timer(0.01, self.run_loop)
-
-    def run_loop(self):
-        """Run the agent's main loop, asking for neighbours and balancing power cells."""
-        self.ask_for_neighbours(response=1.0)  # Ask for neighbours
-        self.balance_power_cells()
+        self.reset_partition(position=self.position, polygon=self.boundary)
+        self.pb_timer = self.create_timer(0.1, self.balance_power_cells)
 
     def run_stc(self):
         """Compute the Spanning-Tree Coverage (STC) path and publish it."""

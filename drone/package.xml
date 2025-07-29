@@ -10,7 +10,6 @@
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
   <depend>visualization_msgs</depend>
-  <build_depend>
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>interface</exec_depend>

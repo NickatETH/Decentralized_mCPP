@@ -13,8 +13,8 @@ class ThompsonScheduler:
 
     def __init__(
         self,
-        seed_bounds: tuple[float, float],
-        sp_bounds: tuple[float, float],
+        seed_bounds: tuple[float, float] = (0.0, 1.0),
+        sp_bounds: tuple[float, float] = (0.0, 1.0),
         λ: float = 1.0,
         grid_size: int = 50,
         max_evals: int = 30,

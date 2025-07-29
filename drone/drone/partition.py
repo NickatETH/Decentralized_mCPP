@@ -6,6 +6,8 @@ from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point as RosPoint
 from typing import Tuple, List
 from rclpy.duration import Duration
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+
 
 color_map = [
     (33 / 255, 92 / 255, 175 / 255),  # ETH Blau
@@ -18,6 +20,10 @@ color_map = [
 ]
 
 
+qos = QoSProfile(depth=50)
+qos.reliability = ReliabilityPolicy.RELIABLE
+
+
 class PartitionMixin:
     """Mixin class for partitioning functionality."""
 
@@ -25,64 +31,63 @@ class PartitionMixin:
         super().__init__()
         self.position = (0.0, 0.0)  # Initial position (x, y)
         self.weight = 0.0
-        self.GAMMA = 0.01
+        self.GAMMA = 0.0025
         self.converged = 0.0  # False
-        self.TOLERANCE = 0.075
+        self.TOLERANCE = 0.2
         self.boundary = None
 
         self.polygon = None  # Polygon of current power cell
         self.neighbours = []  # list of (id, position, weight, converged) tuples
 
         # Neighbour exchange
-        self.nb_pub_ = self.create_publisher(Float32MultiArray, "neighbours", 10)
+        self.nb_pub_ = self.create_publisher(Float32MultiArray, "neighbours", qos)
         self.nb_sub_ = self.create_subscription(
-            Float32MultiArray, "neighbours", self.nb_callback, 10
+            Float32MultiArray, "neighbours", self.nb_callback, qos
         )
-        self.marker_pub = self.create_publisher(Marker, "power_cell_marker", 10)
+        self.marker_pub = self.create_publisher(Marker, "power_cell_marker", qos)
 
     def reset_partition(
-        self, position: Tuple[float, float], weight: float, polygon: Polygon
+        self, position: Tuple[float, float], polygon: Polygon, weight: float = None
     ):
         """Reset the partitioning state."""
         self.position = position
         self.polygon = polygon
-        self.weight = weight
+        self.weight = 0.0 if weight is None else weight
         self.converged = 0.0
         self.neighbours.clear()
+        self.tell_neighbours()
 
     # ------------------------------------------------------------------
     # Neighbour handling
     # ------------------------------------------------------------------
-    def ask_for_neighbours(self, response: float):
+    def tell_neighbours(self, agent_id=None) -> None:
         """Broadcast (id, x, y, weight) to other agents."""
         msg = Float32MultiArray()
         msg.data = [
-            float(self.agent_id),
+            float(agent_id) if agent_id is not None else float(self.agent_id),
             float(self.position[0]),
             float(self.position[1]),
             float(self.weight),
             float(self.converged),
-            1.0,  # I want a response
         ]
         if rclpy.ok():
             self.nb_pub_.publish(msg)
 
-    def nb_callback(self, msg):
+    def nb_callback(self, msg: Float32MultiArray) -> None:
         """Store neighbour information if the sender is close enough."""
         agent_id = int(msg.data[0])
         if agent_id == self.agent_id:
             return  # ignore our own broadcasts
+        if agent_id == -1.0:
+            self.tell_neighbours(None)
+            return
 
         position = (msg.data[1], msg.data[2])
         weight = msg.data[3]
         converged = msg.data[4]
-        response = msg.data[5]
 
         # Only consider neighbours within 1000 m
         if Point(position).distance(Point(self.position)) < 1000.0:
-            if response == 1.0:
-                self.ask_for_neighbours(response=0.0)  # Respond to the neighbour
-            # Replace existing entry or append a new one
             for i, (nb_id, *_rest) in enumerate(self.neighbours):
                 if nb_id == agent_id:
                     self.neighbours[i] = (agent_id, position, weight, converged)
@@ -148,21 +153,24 @@ class PartitionMixin:
             # Store result
             self.polygon = cell.intersection(self.boundary)
             self.position = (self.polygon.centroid.x, self.polygon.centroid.y)
+            # send neighbour information
+            self.tell_neighbours()
             return self.polygon
         except Exception as e:
             self.get_logger().error(f"Error in compute_power_cell: {e}", exc_info=True)
 
     def balance_power_cells(self) -> None:
         """Adjust agent weights until power‑cell areas equalise within tolerance."""
-        # wait for the next 50ms in ros time
+        # wait for the next 30ms in ros time
         now = self.get_clock().now()
-        sleep_ns = 100_000_000 - (now.nanoseconds % 100_000_000)
-        if sleep_ns < 100_000_000:
-            self.get_clock().sleep_for(Duration(nanoseconds=sleep_ns))
+        sleep_ns = 5_000_000 - (now.nanoseconds % 5_000_000)
+        if sleep_ns < 5_000_000:
+            rclpy.spin_once(self, timeout_sec=sleep_ns / 1e9)
 
         cell = self.compute_power_cell()
         if len(self.neighbours) == 0:
             self.get_logger().warn("No neighbours found, cannot balance power cells.")
+            self.tell_neighbours(-1.0)  # Call for re-broadcast
             return
         if cell is None or cell.is_empty:
             return
@@ -192,18 +200,25 @@ class PartitionMixin:
         # close loop
         marker.points.append(marker.points[0])
 
-        marker.scale.x = 0.05  # line width
-        idx = int(self.agent_id) % len(color_map)
-        marker.color.r, marker.color.g, marker.color.b = color_map[idx]
+        marker.scale.x = 0.1  # line width
+        # idx = int(self.agent_id) % len(color_map)
+        # marker.color.r, marker.color.g, marker.color.b = color_map[idx]
+        marker.color.r = 0.5
+        marker.color.g = 0.5
+        marker.color.b = 0.5
         marker.color.a = 1.0
+        marker.lifetime = Duration(seconds=1).to_msg()
         if rclpy.ok():
             self.marker_pub.publish(marker)
 
         # Check convergence
         error = abs(self.polygon.area - target_area) / target_area
+        self.get_logger().info(
+            f"Agent {self.agent_id} area error: {error:.4f} (target: {target_area:.2f})"
+        )
 
         if error < self.TOLERANCE:
-            self.weight = 1.0
+            self.weight = 0.0
             all_converged = all(nb[3] >= 1.0 for nb in self.neighbours)
 
             if all_converged:
@@ -216,6 +231,9 @@ class PartitionMixin:
                     self.run_stc()
                 else:
                     self.converged += 1.0
+                    self.get_logger().info(
+                        f"Agent {self.agent_id} converged: {self.converged:.1f} / 10.0"
+                    )
             else:
                 self.converged = 1.0
 
