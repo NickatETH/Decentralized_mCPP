@@ -13,7 +13,7 @@ from .radius_scheduler import RadiusScheduler
 from .thompson_scheduler import ThompsonScheduler
 import random
 
-NUM_AGENTS = 5
+NUM_AGENTS = 4
 
 AGENT_IDS = list(range(1, NUM_AGENTS + 1))
 AGENT_POSITIONS = {
@@ -59,10 +59,6 @@ def launch_agent(aid: int, x: float, y: float) -> subprocess.Popen:
         str(aid),
         "--num_agents",
         str(len(AGENT_IDS)),
-        "--posx",
-        str(x),
-        "--posy",
-        str(y),
         *BOUNDARY_ARGS,
     ]
     return subprocess.Popen(cmd, preexec_fn=os.setsid)  # POSIX
@@ -93,13 +89,21 @@ class Controller(Node):
             Float64MultiArray, "/reset_agents", qos_reliable_vol
         )
 
+        self.reset_agents_sub = self.create_subscription(
+            Float64MultiArray,
+            "/reset_agents",
+            self.reset_position_callback,
+            qos_reliable_vol,
+        )
+        self.reset_response = [False] * len(AGENT_IDS)
+
         self.shutdown_sub = self.create_subscription(
             Empty, "/shutdown", self.shutdown_callback, 1
         )
         self.shutdown = False  # Initialize shutdown as a boolean
 
         self.radius_scheduler = RadiusScheduler(
-            self, self.start_pub, v_max=10.0, eps=0.01
+            self, self.start_pub, v_max=10.0, eps=0.05
         )
         self.create_subscription(
             Float64MultiArray,
@@ -119,7 +123,14 @@ class Controller(Node):
         for aid in AGENT_IDS:
             x, y = AGENT_POSITIONS[aid]
             proc = launch_agent(aid, x, y)
-            self.get_logger().info(f"Launched uav_agent_{aid} (pid {proc.pid})")
+        while not all(self.reset_response):
+            rclpy.spin_once(self, timeout_sec=0.1)
+        self.get_logger().info("All agents launched and reset.")
+        self.reset_agents()
+        while not all(self.reset_response):
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+        self.get_logger().info("All agents reset/INIT successfully.")
 
         for aid in AGENT_IDS:
             srv = f"/uav_agent_{aid}/compute_energy"
@@ -130,39 +141,54 @@ class Controller(Node):
                 self.get_logger().warn(f"{srv} not up yet, waiting…")
         self.get_logger().info("All energy clients initialized.")
 
+    def reset_position_callback(self, msg: Float64MultiArray) -> None:
+        """Reset the UAV's position and partition state if the message targets this agent."""
+        if len(msg.data) < 3:
+            self.get_logger().warn("Reset message too short, expected 3 floats.")
+            return
+        if msg.data[0] != -(1.0):
+            return
+        self.reset_response[int(msg.data[1] - 1.0)] = True
+
     def _on_bo_result(self, msg: Float64MultiArray) -> None:
         self.get_logger().info("Received BO result")
 
-    def calculate_energy(self, aid: int) -> None:
+    def calculate_energy(self, aid: int):
         """
         Fire off all UAV energy requests in parallel and return the sum.
         """
-
         total = 0.0
+        longest_path = 0.0
         for aid, cli in self.energy_clients_dict.items():
             while True:
+                rclpy.spin_once(self, timeout_sec=0.8)
                 req = ComputeEnergy.Request()
                 req.cruise_speed = self.cruise_speed
                 req.a = self.a
                 req.b = self.b
                 future = cli.call_async(req)
                 while rclpy.ok() and not future.done():
-                    rclpy.spin_once(self)
+                    rclpy.spin_once(self, timeout_sec=0.8)
                 try:
                     energy = future.result().energy
                     if energy == -1.0:
                         self.get_logger().warn(f"Agent {aid} not ready, retrying...")
                         continue
                     total += energy
+                    if longest_path < future.result().path_length:
+                        longest_path = future.result().path_length
                     break
                 except Exception:
                     total += float("inf")
                     break
         self.get_logger().info(f"Total energy for all agents: {total:.2f} J")
-        return total
+        return total, longest_path
 
     def reset_agents(self) -> None:
-        self.reset_agent_pub.publish(Empty())
+        self.reset_response = [False] * len(AGENT_IDS)
+        for aid in AGENT_IDS:
+            x, y = AGENT_POSITIONS[aid]
+            self.reset_agent_pub.publish(Float64MultiArray(data=[aid, 1.0, x, y]))
 
     def run_bayes_opt(self):
         while not self.shutdown:
@@ -177,10 +203,13 @@ class Controller(Node):
             self.get_logger().info(
                 f"Running BO with seed {seed} and starting point {starting_point}"
             )
-            total_energy = self.calculate_energy(seed)
-            max_radius = self.radius_scheduler.calculate_connectivity(starting_point)
+            total_energy, longest_path = self.calculate_energy(seed)
+            self.longest_path = longest_path
+            max_radius = self.radius_scheduler.calculate_connectivity(
+                starting_point, longest_path
+            )
 
-            self.reset_agents()
+            self.get_logger().info("Reset agents after BO round, publishing results")
 
             self.publish_bo_result(
                 seed=seed, sp=starting_point, r=max_radius, E=total_energy
@@ -188,6 +217,7 @@ class Controller(Node):
 
         self.get_logger().info("BO complete ‐ shutting down agents")
         self.total_energy = 0.0
+        return
 
     def publish_bo_result(self, seed: float, sp: float, r: float, E: float) -> None:
         msg = Float64MultiArray()
@@ -199,31 +229,10 @@ class Controller(Node):
         seed, sp, r, E = msg.data
         self.thompson_scheduler.observe(seed, sp, r, E)
 
-    def visualize_samples(self) -> None:
-        """Visualize the current samples as a plot."""
-        import matplotlib.pyplot as plt
-        import matplotlib.patches as patches
-
-        t_values = [t for t, r in self._samples]
-        r_values = [r for t, r in self._samples]
-        plt.figure(figsize=(10, 6))
-        plt.plot(t_values, r_values, marker="o", label="Samples")
-        plt.title("Radius Samples Over Time")
-        plt.xlabel("Time (s)")
-        plt.ylabel("Radius (m)")
-        plt.grid()
-        plt.legend()
-        plt.xlim(0, 1)
-        plt.ylim(0, max(r_values) + 5)
-        plt.axhline(y=self.max_radius, color="r", linestyle="--", label="Max Radius")
-        plt.legend()
-        plt.show()
-
     def shutdown_callback(self, msg: Empty) -> None:
         """Handle shutdown signal."""
         self.get_logger().info("Received shutdown signal, shutting down controller.")
         self.shutdown = True
-        self.destroy_node()
 
 
 def main(args=None) -> None:

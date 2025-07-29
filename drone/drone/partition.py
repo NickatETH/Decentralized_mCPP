@@ -7,6 +7,7 @@ from geometry_msgs.msg import Point as RosPoint
 from typing import Tuple, List
 from rclpy.duration import Duration
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+import time
 
 
 color_map = [
@@ -35,6 +36,7 @@ class PartitionMixin:
         self.converged = 0.0  # False
         self.TOLERANCE = 0.25
         self.boundary = None
+        self.last_call = None
 
         self.polygon = None  # Polygon of current power cell
         self.neighbours = []  # list of (id, position, weight, converged) tuples
@@ -79,6 +81,7 @@ class PartitionMixin:
         if agent_id == self.agent_id:
             return  # ignore our own broadcasts
         if agent_id == -1.0:
+
             self.tell_neighbours(None)
             return
 
@@ -170,9 +173,11 @@ class PartitionMixin:
         cell = self.compute_power_cell()
         if len(self.neighbours) == 0:
             self.get_logger().warn("No neighbours found, cannot balance power cells.")
+            now = self.get_clock().now()
+            sleep_ns = 50_000_000 - (now.nanoseconds % 50_000_000)
+            if sleep_ns < 50_000_000:
+                rclpy.spin_once(self, timeout_sec=sleep_ns / 1e9)
             self.tell_neighbours(-1.0)  # Call for re-broadcast
-            return
-        if cell is None or cell.is_empty:
             return
 
         target_area = self.boundary.area / (len(self.neighbours) + 1.0)

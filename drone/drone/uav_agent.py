@@ -8,6 +8,8 @@ from rclpy.node import Node
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy._rclpy_pybind11 import RCLError
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+
 
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point as RosPoint
@@ -21,9 +23,17 @@ from .energy_calculation import EnergyMixin
 from .stc import STCMixin
 from .partition import PartitionMixin
 
+from interface.srv import ComputeEnergy
+
 
 Coordinate = Tuple[float, float]
 Grid = List[Coordinate]
+
+qos_reliable_vol = QoSProfile(
+    depth=20,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.VOLATILE,
+)
 
 
 color_map = [
@@ -42,7 +52,7 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
     neighbours and computes its weighted Voronoi (power) cell.
     """
 
-    def __init__(self, agent_id, num_agents, position, boundary):
+    def __init__(self, agent_id, num_agents, boundary):
         Node.__init__(self, f"uav_agent_{int(agent_id)}")  # <-- Only Node gets the name
         RadiusMixin.__init__(self)
         STCMixin.__init__(self)
@@ -51,21 +61,57 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
 
         self.agent_id = agent_id
         self.num_agents = num_agents
-        self.position = position  # (x, y)
+        self.position = None  # (x, y)
         self.boundary = boundary  # Polygon defining the boundary of the area
+        self.path = None
+        self.shutdown = False  # Initialize shutdown as a boolean
 
         self.shutdown_sub = self.create_subscription(
             Empty, "/shutdown", self.shutdown_callback, 2
         )
-        self.shutdown = False  # Initialize shutdown as a boolean
+
+        self.reset_sub = self.create_subscription(
+            Float64MultiArray,
+            "/reset_agents",
+            self.reset_position_callback,
+            qos_reliable_vol,
+        )
+        self.reset_pub = self.create_publisher(
+            Float64MultiArray, "/reset_agents", qos_reliable_vol
+        )
 
         self.prep_radiusmixin(agent_id)  # Initialize radius mixin
+        self.pb_timer = None
+        self.get_logger().info(f"UAV agent {self.agent_id} initialized ")
+        self.reset_pub.publish(
+            Float64MultiArray(data=[-(1.0), self.agent_id, 0.0, 0.0])
+        )
 
-        self.reset_partition(position=self.position, polygon=self.boundary)
+    def reset_position_callback(self, msg: Float64MultiArray) -> None:
+        """Reset the UAV's position and partition state if the message targets this agent."""
+        if len(msg.data) < 3:
+            self.get_logger().warn("Reset message too short, expected 3 floats.")
+            return
+        target_id = msg.data[0]
+        if target_id != self.agent_id:
+            return  # Ignore if not for this agent
+        position = (msg.data[2], msg.data[3])
+        self.position = position
+        self.path = None
+        # self.reset_partition(position=position, polygon=self.boundary)
+        self.get_logger().info(f"UAV {self.agent_id} reset to position {position}")
         self.pb_timer = self.create_timer(0.1, self.balance_power_cells)
+
+        # pub ok
+        self.reset_pub.publish(
+            Float64MultiArray(
+                data=[-(msg.data[1]), self.agent_id, position[0], position[1]]
+            )
+        )
 
     def run_stc(self):
         """Compute the Spanning-Tree Coverage (STC) path and publish it."""
+        print(f"Running STC for agent {self.agent_id}")
         cell_size = 2.0
         grid = self.polygon_to_grid(self.polygon, cell_size)
         stc_path = self.compute_stc(grid)
@@ -73,6 +119,11 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
 
         self.path = offset_path  # Store the path for later use
         self.get_logger().info(f"Computed STC path: {len(offset_path.coords)} points")
+
+        self._energy_srv = self.create_service(
+            ComputeEnergy, "~/compute_energy", self.compute_energy_cb
+        )
+
         # Publish the path as a marker
         marker = Marker()
         marker.header.frame_id = "map"  # whatever fixed frame you’re using
@@ -102,7 +153,6 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
         """Handle shutdown signal."""
         self.get_logger().info("Received shutdown signal, shutting down agent.")
         self.shutdown = True
-        self.destroy_node()
 
 
 # ------------------------------------------------------------------
@@ -117,8 +167,6 @@ def _parse_cli(argv):
     parser.add_argument(
         "--num_agents", type=int, required=True, help="Total number of agents"
     )
-    parser.add_argument("--posx", type=float, required=True, help="Initial x position")
-    parser.add_argument("--posy", type=float, required=True, help="Initial y position")
     parser.add_argument("--xmin", type=float, default=-50.0, help="Boundary min x")
     parser.add_argument("--ymin", type=float, default=-50.0, help="Boundary min y")
     parser.add_argument("--xmax", type=float, default=50.0, help="Boundary max x")
@@ -150,17 +198,21 @@ def main(argv=None):
     agent = UavAgent(
         agent_id=cli_args.agent_id,
         num_agents=cli_args.num_agents,
-        position=(cli_args.posx, cli_args.posy),
         boundary=boundary,
     )
 
     try:
-        while rclpy.ok() and not agent.shutdown:
-            rclpy.spin_once(agent, timeout_sec=0.1)
+        while not agent.shutdown:
+            rclpy.spin_once(agent, timeout_sec=0.0)
     except (KeyboardInterrupt, ExternalShutdownException, RCLError):
         # Normal termination triggered by Ctrl‑C or external shutdown
         pass
     finally:
+        if agent.shutdown:
+            print("Shutting down UAV agent due to received shutdown signal.")
+        else:
+            print("Shutting down UAV agent due to external interrupt or error.")
+        print("Shutting down UAV agent...:", rclpy.ok(), agent.shutdown)
         agent.destroy_node()
         if rclpy.ok():  # avoid double shutdown
             rclpy.shutdown()

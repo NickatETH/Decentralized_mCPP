@@ -6,9 +6,7 @@ from typing import Tuple
 class EnergyMixin:
     def __init__(self):
         super().__init__()
-        self._energy_srv = self.create_service(
-            ComputeEnergy, "~/compute_energy", self.compute_energy_cb
-        )
+        self._energy_srv = None
         self.path = []
 
     def _distance(self, p: Tuple[float, float], q: Tuple[float, float]) -> float:
@@ -34,7 +32,7 @@ class EnergyMixin:
         """
         if request.cruise_speed <= 0.0:
             raise ValueError("cruise_speed must be > 0")
-        if self.path == []:
+        if self.path == [] or self.path is None:
             response.energy = -1.0
             return response
         if len(self.path.coords) < 2:
@@ -84,5 +82,10 @@ class EnergyMixin:
             energy += power * time * turnfactor
 
         response.energy = energy
+        response.path_length = (
+            sum(
+                self._distance(coords[i], coords[i + 1]) for i in range(len(coords) - 1)
+            )
+        ) / request.cruise_speed
 
         return response

@@ -46,6 +46,8 @@ class RadiusMixin:
         self.radius_pos = (0.0, 0.0)
         self.starting_point = 0.0
         self.nbr_table = {}
+        self.nbr_attempts = 0
+        self.current_rid = None
 
         self.beacon_pub = self.create_publisher(
             PointStamped, "/beacon", qos_best_effort
@@ -78,13 +80,11 @@ class RadiusMixin:
         self.radius_pos = (0.0, 0.0)
         self.starting_point = 0.0
         self.nbr_table.clear()
+        self.nbr_attempts = 0
+        now = self.get_clock().now()  # get rid of old stuff
+        while now + Duration(seconds=0.1) > self.get_clock().now():
+            rclpy.spin_once(self, timeout_sec=0.01)
         self.stop_all = False
-        self.packet_sub = self.create_subscription(
-            Float32MultiArray, "/ghs_packet", self.ghs_cb, qos_best_effort
-        )
-        self.beacon_sub = self.create_subscription(
-            PointStamped, "/beacon", self.beacon_cb, qos_best_effort
-        )
 
     # Beacon I/O
     def send_beacon(self):
@@ -116,6 +116,7 @@ class RadiusMixin:
 
         t_target = data[0]  # Offset time
         rid = data[1]  # Passthrough value (returned as is at the end with radius)
+        self.current_rid = rid
 
         idx = int(1 + self.agent_id)
         sp = data[idx]
@@ -128,11 +129,10 @@ class RadiusMixin:
 
         self.send_beacon()  # send initial beacon
         self.frag = FragmentState(self.agent_id)  # reset fragment state
-        self.get_clock().sleep_for(Duration(seconds=0.1))
+        now = self.get_clock().now()  # get rid of old stuff
+        while now + Duration(seconds=0.1) > self.get_clock().now():
+            rclpy.spin_once(self, timeout_sec=0.0)
         self.ghs_timer = self.create_timer(0.1, lambda: self._report_best(rid))
-        print(
-            f"Starting GHS with radius {rid} at position {self.agent_id} {self.radius_pos}"
-        )
 
     def _compute_best_out(self):
         # 1) collect all neighbours except your own fragment
@@ -156,11 +156,31 @@ class RadiusMixin:
             now = self.get_clock().now().nanoseconds
             if not hasattr(self, "_last_log"):
                 self._last_log = 0
-            if now - self._last_log > 1 * 1e9:  # 5 seconds in nanoseconds
-                self.get_logger().info(
-                    f"Agent {self.agent_id} has no more neighbours to try: {neighbours}"
-                )
-                self._last_log = now
+            if now - self._last_log > 1 * 1e9:  # 1 second in nanoseconds
+                # self.get_logger().info(
+                #     f"Agent {self.agent_id} has no more neighbours to try: {neighbours}"
+                # )
+                if self.nbr_attempts < 30:
+                    self.nbr_attempts += 1
+                else:
+                    pkt_r = Float64MultiArray(data=[0.0, -1.0])
+                    self.radius_pub.publish(pkt_r)
+                    self.stop_all = True  # Stop the agent's main loop
+                    for child in self.frag.children:
+                        pkt = Float32MultiArray(
+                            data=[
+                                4,
+                                self.current_rid,
+                                self.agent_id,
+                                child,
+                                self.frag.frag_id,
+                                self.frag.level,
+                                self.frag.max_weight,
+                            ]
+                        )
+                        self.ghs_pub.publish(pkt)
+                        print("Aborting for nbrs")
+                        return
 
             self.frag.nbr_iter = 0  # reset neighbour iteration
 
@@ -183,7 +203,7 @@ class RadiusMixin:
         if self.stop_all == True:
             return
         typ, rid, src, dst, fid, lvl, weight, *children = msg.data
-        if dst != self.agent_id:
+        if dst != self.agent_id or rid != self.current_rid:
             return  # ignore packets not addressed to me
         if typ == 0:  # TEST
             ans_typ = 0
@@ -233,9 +253,9 @@ class RadiusMixin:
                 self.ghs_pub.publish(pkt)
 
         elif typ == 1:  # ACCEPT
-            self.get_logger().warn(
-                f"Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
-            )
+            # self.get_logger().warn(
+            #     f"Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
+            # )
             init_pkt = Float32MultiArray(
                 data=[
                     5,
@@ -255,7 +275,7 @@ class RadiusMixin:
             # print(f"Fragment after: {self.frag.__dict__}")
 
         elif typ == 2:  # REJECT
-            self.get_logger().info(f"Agent {self.agent_id} received REJECT from {src}")
+            # self.get_logger().info(f"Agent {self.agent_id} received REJECT from {src}")
             self.ghs_timer = self.create_timer(
                 0.1, lambda rid=rid: self._report_best(rid)
             )
@@ -286,7 +306,7 @@ class RadiusMixin:
                     return
 
         elif typ == 4:  # Abort, result found --> Reset function?
-            self.get_logger().info(f"Agent {self.agent_id} received ABORT from {src}")
+            # self.get_logger().info(f"Agent {self.agent_id} received ABORT from {src}")
             if self.ghs_timer is not None:
                 self.ghs_timer.cancel()
             self.get_clock().sleep_for(Duration(seconds=0.5))
@@ -294,15 +314,15 @@ class RadiusMixin:
             return
 
         elif typ == 5:  # Clean Merge
-            self.get_logger().warn(
-                f"Agent {self.agent_id} received CLEAN MERGE from N: {src} for fragment {fid}, root {self.frag.root}"
-            )
+            # self.get_logger().warn(
+            #     f"Agent {self.agent_id} received CLEAN MERGE from N: {src} for fragment {fid}, root {self.frag.root}"
+            # )
             # Check its not trying to merge with itself
             if fid == self.frag.frag_id:
                 return
-            self.get_logger().warn(
-                f"Secondary: Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
-            )
+            # self.get_logger().warn(
+            #     f"Secondary: Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
+            # )
             self._merge_fragments(rid, lvl, fid, children)
             self.frag.update_max_weight(weight)
 
@@ -310,43 +330,46 @@ class RadiusMixin:
         if (
             self.frag.root == self.agent_id
             and len(self.frag.children) == self.num_agents - 1
+            and not self.stop_all
         ):  # Root decides radius
-            pkt_r = Float64MultiArray(data=[self.frag.max_weight, rid])
-            self.radius_pub.publish(pkt_r)
-            self.get_logger().error(
-                "Final radius sent to controller: " + str(self.frag.max_weight)
-            )
+            rclpy.spin_once(self, timeout_sec=0.0)
+            rclpy.spin_once(self, timeout_sec=0.0)
+            rclpy.spin_once(self, timeout_sec=0.0)
 
-            # send end signal to all children
-            for child in self.frag.children:
+            pkt_r = Float64MultiArray(data=[self.frag.max_weight, rid])
+            if not self.stop_all:
+                self.radius_pub.publish(pkt_r)
+                self.get_logger().error(
+                    "Final radius sent to controller: " + str(self.frag.max_weight)
+                )
+
+                # send end signal to all children
+                for child in self.frag.children:
+                    pkt = Float32MultiArray(
+                        data=[
+                            4,
+                            rid,
+                            self.agent_id,
+                            child,
+                            self.frag.frag_id,
+                            self.frag.level,
+                            self.frag.max_weight,
+                        ]
+                    )
+                    self.ghs_pub.publish(pkt)
+
                 pkt = Float32MultiArray(
                     data=[
                         4,
                         rid,
                         self.agent_id,
-                        child,
+                        self.agent_id,
                         self.frag.frag_id,
                         self.frag.level,
                         self.frag.max_weight,
                     ]
                 )
                 self.ghs_pub.publish(pkt)
-                self.get_logger().info(
-                    f"Agent {self.agent_id} sent ABORT to child {child} with radius {rid}"
-                )
-            # stop itself
-            pkt = Float32MultiArray(
-                data=[
-                    4,
-                    rid,
-                    self.agent_id,
-                    self.agent_id,
-                    self.frag.frag_id,
-                    self.frag.level,
-                    self.frag.max_weight,
-                ]
-            )
-            self.ghs_pub.publish(pkt)
 
     # fragment‑merge rule
     def _merge_fragments(self, rid, other_level, other_fid, children):
@@ -367,9 +390,9 @@ class RadiusMixin:
                 if child not in self.frag.children:
                     self.frag.add_child(child)
 
-            self.get_logger().warn(
-                f"Fragment {self.frag.root} includes: {self.frag.children} "
-            )
+            # self.get_logger().warn(
+            #     f"Fragment {self.frag.root} includes: {self.frag.children} "
+            # )
             self._report_up(rid)
 
         self.frag.best_out = None
