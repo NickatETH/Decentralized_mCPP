@@ -11,6 +11,7 @@ from rclpy._rclpy_pybind11 import RCLError
 
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point as RosPoint
+from std_msgs.msg import Float64MultiArray, Empty
 
 from shapely.geometry import Polygon
 
@@ -44,14 +45,19 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
     def __init__(self, agent_id, num_agents, position, boundary):
         Node.__init__(self, f"uav_agent_{int(agent_id)}")  # <-- Only Node gets the name
         RadiusMixin.__init__(self)
-        EnergyMixin.__init__(self)
         STCMixin.__init__(self)
         PartitionMixin.__init__(self)
+        EnergyMixin.__init__(self)
 
         self.agent_id = agent_id
         self.num_agents = num_agents
         self.position = position  # (x, y)
         self.boundary = boundary  # Polygon defining the boundary of the area
+
+        self.shutdown_sub = self.create_subscription(
+            Empty, "/shutdown", self.shutdown_callback, 2
+        )
+        self.shutdown = False  # Initialize shutdown as a boolean
 
         self.prep_radiusmixin(agent_id)  # Initialize radius mixin
 
@@ -91,6 +97,12 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
         marker.color.a = 1.0
         if rclpy.ok():
             self.marker_pub.publish(marker)
+
+    def shutdown_callback(self, msg: Empty) -> None:
+        """Handle shutdown signal."""
+        self.get_logger().info("Received shutdown signal, shutting down agent.")
+        self.shutdown = True
+        self.destroy_node()
 
 
 # ------------------------------------------------------------------
@@ -143,7 +155,8 @@ def main(argv=None):
     )
 
     try:
-        rclpy.spin(agent)
+        while rclpy.ok() and not agent.shutdown:
+            rclpy.spin_once(agent, timeout_sec=0.1)
     except (KeyboardInterrupt, ExternalShutdownException, RCLError):
         # Normal termination triggered by Ctrl‑C or external shutdown
         pass

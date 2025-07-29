@@ -38,6 +38,7 @@ class RadiusScheduler:
         return min(r + self.L * abs(t - tk) for tk, r in self.samples)
 
     def request_probe(self) -> None:
+        print("requesting new probe")
         """Starts a new round if needed."""
         if self.round_id < 2:  # first two rounds are special
             t_probe = float(self.round_id)
@@ -59,6 +60,7 @@ class RadiusScheduler:
 
     def radius_callback(self, msg: Float64MultiArray) -> None:
         """Callback when `/radius` arrives."""
+        print(f"Received radius callback: {msg.data}")
         r, t_probe = msg.data
 
         if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-9:

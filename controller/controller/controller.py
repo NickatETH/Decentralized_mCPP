@@ -92,6 +92,11 @@ class Controller(Node):
             Float64MultiArray, "/reset_agents", qos_reliable_vol
         )
 
+        self.shutdown_sub = self.create_subscription(
+            Empty, "/shutdown", self.shutdown_callback, 1
+        )
+        self.shutdown = False  # Initialize shutdown as a boolean
+
         self.radius_scheduler = RadiusScheduler(
             self, self.start_pub, v_max=10.0, eps=0.01
         )
@@ -144,30 +149,32 @@ class Controller(Node):
         """
         Fire off all UAV energy requests in parallel and return the sum.
         """
-        futures = []
-        for cli in self.energy_clients_dict.values():
-            req = ComputeEnergy.Request()
-            req.cruise_speed = self.cruise_speed
-            req.a = self.a
-            req.b = self.b
-            futures.append(cli.call_async(req))
-
-        while rclpy.ok() and not all(f.done() for f in futures):
-            rclpy.spin_once(self, timeout_sec=0.0)
 
         total = 0.0
-        for f in futures:
-            try:
-                total += f.result().energy
-            except Exception:
-                total += float("inf")
+        for aid, cli in self.energy_clients_dict.items():
+            while True:
+                req = ComputeEnergy.Request()
+                req.cruise_speed = self.cruise_speed
+                req.a = self.a
+                req.b = self.b
+                future = cli.call_async(req)
+                while rclpy.ok() and not future.done():
+                    rclpy.spin_once(self)
+                try:
+                    energy = future.result().energy
+                    if energy == -1.0:
+                        self.get_logger().warn(f"Agent {aid} not ready, retrying...")
+                        continue
+                    total += energy
+                    break
+                except Exception:
+                    total += float("inf")
+                    break
+        self.get_logger().info(f"Total energy for all agents: {total:.2f} J")
         return total
 
     def reset_agents(self) -> None:
         self.reset_agent_pub.publish(Empty())
-
-    def shutdown_agents(self) -> None:
-        self.kill_agent_pub.publish(Empty())
 
     def run_bayes_opt(self):
         while True:
@@ -230,11 +237,18 @@ class Controller(Node):
         plt.legend()
         plt.show()
 
+    def shutdown_callback(self, msg: Empty) -> None:
+        """Handle shutdown signal."""
+        self.get_logger().info("Received shutdown signal, shutting down controller.")
+        self.shutdown = True
+        self.destroy_node()
+
 
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = Controller()
     try:
+        print("Starting Bayesianff Optimization loop...")
         node.run_bayes_opt()
     finally:
         node.destroy_node()
