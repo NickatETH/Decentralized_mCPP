@@ -143,8 +143,8 @@ class Controller(Node):
             while True:
                 req = ComputeEnergy.Request()
                 req.cruise_speed = self.cruise_speed
-                req.power_straight = self.a
-                req.power_turn = self.b
+                req.a = self.a
+                req.b = self.b
                 future = cli.call_async(req)
                 while rclpy.ok() and not future.done():
                     rclpy.spin_once(self)

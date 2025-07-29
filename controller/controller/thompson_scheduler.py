@@ -42,7 +42,7 @@ class ThompsonScheduler:
         """Return next (seed,sp) or None if done."""
         # Seed with corners if too few data:
         if self.evals < 2:
-            pt = [(self.grid[0], self.grid[-1])[self.evals]]
+            pt = (self.grid[0], self.grid[-1])[self.evals]
             self.evals += 1
             return pt
 

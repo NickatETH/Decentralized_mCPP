@@ -38,6 +38,7 @@ class RadiusScheduler:
         return min(r + self.L * abs(t - tk) for tk, r in self.samples)
 
     def request_probe(self) -> None:
+        print("requesting new probe")
         """Starts a new round if needed."""
         if self.round_id < 2:  # first two rounds are special
             t_probe = float(self.round_id)
