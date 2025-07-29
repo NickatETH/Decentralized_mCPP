@@ -33,7 +33,7 @@ class PartitionMixin:
         self.weight = 0.0
         self.GAMMA = 0.0025
         self.converged = 0.0  # False
-        self.TOLERANCE = 0.2
+        self.TOLERANCE = 0.25
         self.boundary = None
 
         self.polygon = None  # Polygon of current power cell
@@ -213,27 +213,22 @@ class PartitionMixin:
 
         # Check convergence
         error = abs(self.polygon.area - target_area) / target_area
-        self.get_logger().info(
-            f"Agent {self.agent_id} area error: {error:.4f} (target: {target_area:.2f})"
-        )
 
         if error < self.TOLERANCE:
             self.weight = 0.0
             all_converged = all(nb[3] >= 1.0 for nb in self.neighbours)
 
             if all_converged:
-                if self.converged > 10.0 and all(
-                    nb[3] >= 10.0 for nb in self.neighbours
-                ):
+                if self.converged > 4.0 and all(nb[3] >= 4.0 for nb in self.neighbours):
                     self.get_logger().info(f"Agent {self.agent_id} converged forall: ")
 
                     self.pb_timer.cancel()
                     self.run_stc()
                 else:
                     self.converged += 1.0
-                    self.get_logger().info(
-                        f"Agent {self.agent_id} converged: {self.converged:.1f} / 10.0"
-                    )
+                    # self.get_logger().info(
+                    #     f"Agent {self.agent_id} converged: {self.converged:.1f} / 10.0"
+                    # )
             else:
                 self.converged = 1.0
 

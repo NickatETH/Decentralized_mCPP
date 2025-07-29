@@ -59,6 +59,7 @@ class RadiusScheduler:
 
     def radius_callback(self, msg: Float64MultiArray) -> None:
         """Callback when `/radius` arrives."""
+        print(f"Received radius callback: {msg.data}")
         r, t_probe = msg.data
 
         if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-9:
