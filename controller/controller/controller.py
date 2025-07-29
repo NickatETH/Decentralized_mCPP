@@ -77,12 +77,10 @@ class Controller(Node):
             Float64MultiArray, "/bo_results", self._on_bo_result, qos_reliable_vol
         )
 
-        # add kill agent publisher here
         self.kill_agent_pub = self.create_publisher(
             Float64MultiArray, "/kill_agents", qos_reliable_vol
         )
 
-        # add reset agent publisher here
         self.reset_agent_pub = self.create_publisher(
             Float64MultiArray, "/reset_agents", qos_reliable_vol
         )
@@ -96,18 +94,15 @@ class Controller(Node):
 
         self.energy_clients_dict: Dict[int, rclpy.client.Client] = {}
 
-        # request constants
         self.cruise_speed = 10.0
         self.a = 1.0
         self.b = 1.0
 
-        # launch agents
         for aid in AGENT_IDS:
             x, y = AGENT_POSITIONS[aid]
             proc = launch_agent(aid, x, y)
             self.get_logger().info(f"Launched uav_agent_{aid} (pid {proc.pid})")
 
-        # create service clients and send first request
         for aid in AGENT_IDS:
             srv = f"/uav_agent_{aid}/compute_energy"
             cli = self.create_client(ComputeEnergy, srv)
@@ -120,7 +115,6 @@ class Controller(Node):
         """
         Fire off all UAV energy requests in parallel and return the sum.
         """
-        # 1) launch all calls
         futures = []
         for cli in self.energy_clients_dict.values():
             req = ComputeEnergy.Request()
@@ -129,11 +123,9 @@ class Controller(Node):
             req.b               = self.b
             futures.append(cli.call_async(req))
 
-        # 2) wait for all to finish
         while rclpy.ok() and not all(f.done() for f in futures):
             rclpy.spin_once(self)
 
-        # 3) collect and sum
         total = 0.0
         for f in futures:
             try:
