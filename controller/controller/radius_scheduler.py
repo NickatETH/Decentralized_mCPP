@@ -1,6 +1,7 @@
 import rclpy
 from std_msgs.msg import Float64MultiArray
 
+
 class RadiusScheduler:
     """Minimal Shubert–Piyavskii sampler for r(t) with L = 2 · v_max."""
 
@@ -9,15 +10,18 @@ class RadiusScheduler:
         node: rclpy.node.Node,
         start_pub,  # the existing publisher
         v_max: float,  # worst‑case UAV speed [m/s]
-        eps: float = 2.0, # desired accuracy [m]
-    ):  
-            
+        eps: float = 2.0,  # desired accuracy [m]
+    ):
+
         self.node = node
         self.pub = start_pub
         self.L = 2.0 * v_max
         self.eps = eps
         self.round_id = 0
-        self.samples = [(0.0, 0.0), (1.0, 0.0)]  # (t,r) pairs already measured; endpoints hold +∞ until sampled
+        self.samples = [
+            (0.0, 0.0),
+            (1.0, 0.0),
+        ]  # (t,r) pairs already measured; endpoints hold +∞ until sampled
         self.max_radius = 0.0  # highest r(t) seen so far
         self.starting_point = 0.0
 
@@ -41,7 +45,7 @@ class RadiusScheduler:
         else:
             t_probe = self.next_probe_time()
             if t_probe is None:  # envelope tight enough
-                return 
+                return
 
         self.round_id += 1
 
@@ -63,10 +67,12 @@ class RadiusScheduler:
             self.samples.sort(key=lambda x: x[0])
             if r > self.max_radius:
                 self.max_radius = r
-            self.node.get_logger().info(f"[RS] got r({t_probe:.3f})={r:.3f}; max={self.max_radius:.3f}")
+            self.node.get_logger().info(
+                f"[RS] got r({t_probe:.3f})={r:.3f}; max={self.max_radius:.3f}"
+            )
             # clear the flag
             self._pending_t = None
-    
+
     def calculate_connectivity(self, starting_point: float) -> float:
         """Run all rounds for this sp, blocking until each /radius arrives."""
         self.reset_state()
@@ -95,5 +101,3 @@ class RadiusScheduler:
                 rclpy.spin_once(self.node)
 
         return self.max_radius
-            
-        
