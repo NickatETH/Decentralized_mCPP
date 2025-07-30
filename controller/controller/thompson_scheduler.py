@@ -13,54 +13,45 @@ class ThompsonScheduler:
 
     def __init__(
         self,
-        seed_bounds: tuple[float, float] = (0.0, 1.0),
-        sp_bounds: tuple[float, float] = (0.0, 1.0),
-        λ: float = 1.0,
-        grid_size: int = 50,
-        max_evals: int = 30,
+        candidate_set: np.ndarray,   # shape=(M, 3*NUM_AGENTS)
+        lambda_BO: float = 1.0,
+        max_evals: int = 1000,
     ):
-        self.λ = λ
+        self.cand      = candidate_set
+        self.lambda_BO = lambda_BO
         self.max_evals = max_evals
-        self.evals = 0
-
-        # 2-D grid of candidate (seed, sp) pairs
-        seeds = np.linspace(seed_bounds[0], seed_bounds[1], grid_size)
-        sps = np.linspace(sp_bounds[0], sp_bounds[1], grid_size)
-        self.grid = np.stack(np.meshgrid(seeds, sps), -1).reshape(-1, 2)
+        self.evals     = 0
 
         # GP with Matern + white noise
-        kernel = ConstantKernel(1.0) * Matern(
-            length_scale=[0.2, 0.2], nu=2.5
-        ) + WhiteKernel(noise_level=1e-3)
+        kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) \
+               + WhiteKernel(noise_level=1e-3)
         self.gp = GaussianProcessRegressor(kernel=kernel, normalize_y=True)
 
-        # History
-        self.X: list[list[float, float]] = []
-        self.y: list[float] = []
+        # History of (x_vector, cost)
+        self.X: list[np.ndarray] = []
+        self.y: list[float]    = []
 
-    def next_point(self) -> tuple[float, float] | None:
-        """Return next (seed,sp) or None if done."""
-        # Seed with corners if too few data:
-        if self.evals < 2:
-            pt = (self.grid[0], self.grid[-1])[self.evals]
-            self.evals += 1
-            return pt
-
-        # Fit GP on (X,y)
-        X = np.array(self.X)
-        y = np.array(self.y)
-        self.gp.fit(X, y)
-
-        # Thompson sample on the grid
-        mu, cov = self.gp.predict(self.grid, return_cov=True)
-        sample = np.random.multivariate_normal(mu, cov)
-        idx = np.argmax(sample)
+    def next_point(self) -> np.ndarray | None:
+        """Return one 3n-vector x, or None when budget exhausted."""
+        if self.evals >= self.max_evals:
+            return None
         self.evals += 1
-        return tuple(self.grid[idx])
 
-    def observe(self, seed: float, sp: float, r: float, E: float):
-        """Feed back one observation."""
-        cost = r + self.λ * E
-        print(f"[BO] obs: seed={seed:.3f}, sp={sp:.3f} → cost={cost:.3f}")
-        self.X.append([seed, sp])
+        # Cold start: just return the first few candidates uniquely
+        if len(self.X) < len(self.cand):
+            return self.cand[len(self.X)]
+
+        # Fit GP and draw one Thompson sample over ALL M candidates
+        Xarr = np.vstack(self.X)
+        yarr = np.array(self.y)
+        self.gp.fit(Xarr, yarr)
+
+        mu, cov = self.gp.predict(self.cand, return_cov=True)
+        sample  = np.random.multivariate_normal(mu, cov)
+        best_i  = int(np.argmax(sample))
+        return self.cand[best_i]
+
+    def observe(self, x: np.ndarray, cost: float):
+        """Record one joint observation."""
+        self.X.append(x)
         self.y.append(cost)

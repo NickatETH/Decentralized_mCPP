@@ -13,7 +13,13 @@ from .radius_scheduler import RadiusScheduler
 from .thompson_scheduler import ThompsonScheduler
 import random
 
-NUM_AGENTS = 4
+NUM_AGENTS = 5
+NUM_CANDIDATES = 1000
+RANDOM_SEED = 42
+lambda_BO = 1.0
+MAX_EVALS = 1000
+
+np.random.seed(RANDOM_SEED)
 
 AGENT_IDS = list(range(1, NUM_AGENTS + 1))
 AGENT_POSITIONS = {
@@ -49,7 +55,7 @@ qos_reliable_tx = QoSProfile(
 )
 
 
-def launch_agent(aid: int, x: float, y: float) -> subprocess.Popen:
+def launch_agent(aid: int) -> subprocess.Popen:
     cmd = [
         "ros2",
         "run",
@@ -78,7 +84,7 @@ class Controller(Node):
             Float64MultiArray, "/bo_results", qos_reliable_vol
         )
         self.bo_result_sub = self.create_subscription(
-            Float64MultiArray, "/bo_results", self._on_bo_result, qos_reliable_vol
+            Float64MultiArray, "/bo_results", self.bo_result_callback, qos_reliable_vol
         )
 
         self.kill_agent_pub = self.create_publisher(
@@ -112,7 +118,22 @@ class Controller(Node):
             qos_reliable_vol,
         )
 
-        self.thompson_scheduler = ThompsonScheduler()
+        args = dict(zip(BOUNDARY_ARGS[::2], BOUNDARY_ARGS[1::2]))
+        xmin, ymin = float(args["--xmin"]), float(args["--ymin"])
+        xmax, ymax = float(args["--xmax"]), float(args["--ymax"])
+
+        # Build random joint candidate set of shape (NUM_CANDIDATES, 3*NUM_AGENTS)
+        seed_x = np.random.uniform(xmin, xmax, size=(NUM_CANDIDATES, NUM_AGENTS))
+        seed_y = np.random.uniform(ymin, ymax, size=(NUM_CANDIDATES, NUM_AGENTS))
+        sps = np.random.uniform(0.0, 1.0, size=(NUM_CANDIDATES, NUM_AGENTS))
+        candidate_set = np.hstack([seed_x, seed_y, sps])
+
+        # Instantiate your BO sampler
+        self.thompson_scheduler = ThompsonScheduler(
+            candidate_set=candidate_set,
+            lambda_BO=lambda_BO,
+            max_evals=MAX_EVALS,
+        )
 
         self.energy_clients_dict: Dict[int, rclpy.client.Client] = {}
 
@@ -121,8 +142,7 @@ class Controller(Node):
         self.b = 1.0
 
         for aid in AGENT_IDS:
-            x, y = AGENT_POSITIONS[aid]
-            proc = launch_agent(aid, x, y)
+            proc = launch_agent(aid)
         while not all(self.reset_response):
             rclpy.spin_once(self, timeout_sec=0.1)
         self.get_logger().info("All agents launched and reset.")
@@ -149,9 +169,6 @@ class Controller(Node):
         if msg.data[0] != -(1.0):
             return
         self.reset_response[int(msg.data[1] - 1.0)] = True
-
-    def _on_bo_result(self, msg: Float64MultiArray) -> None:
-        self.get_logger().info("Received BO result")
 
     def calculate_energy(self, aid: int):
         """
@@ -191,38 +208,37 @@ class Controller(Node):
             self.reset_agent_pub.publish(Float64MultiArray(data=[aid, 1.0, x, y]))
 
     def run_bayes_opt(self):
-        while not self.shutdown:
+        while True:
             rclpy.spin_once(self, timeout_sec=0.0)
-            self.get_logger().info("Running Bayesian Optimization")
-            pt = self.thompson_scheduler.next_point()
-            if pt is None:
-
+            x = self.thompson_scheduler.next_point()
+            if x is None:
                 break
-            seed, starting_point = pt
 
-            self.get_logger().info(
-                f"Running BO with seed {seed} and starting point {starting_point}"
-            )
-            total_energy, longest_path = self.calculate_energy(seed)
-            self.longest_path = longest_path
-            max_radius = self.radius_scheduler.calculate_connectivity(
-                starting_point, longest_path
-            )
+            n = NUM_AGENTS
+            seed_xs = x[0:n]
+            seed_ys = x[n : 2 * n]
+            sps = x[2 * n : 3 * n]
 
-            self.get_logger().info("Reset agents after BO round, publishing results")
+            for aid in AGENT_IDS:
+                msg = Float64MultiArray(
+                    data=[
+                        float(aid),
+                        float(seed_xs[aid - 1]),
+                        float(seed_ys[aid - 1]),
+                    ]
+                )
+            self.reset_agent_pub.publish(msg)
 
-            self.publish_bo_result(
-                seed=seed, sp=starting_point, r=max_radius, E=total_energy
-            )
+            max_radius = self.radius_scheduler.calculate_connectivity(sps)
+            total_energy = self.calculate_energy()
+
+            out = Float64MultiArray()
+            out.data = x.tolist() + [max_radius, total_energy]
+            self.bo_result_pub.publish(out)
 
         self.get_logger().info("BO complete ‐ shutting down agents")
         self.total_energy = 0.0
-        return
-
-    def publish_bo_result(self, seed: float, sp: float, r: float, E: float) -> None:
-        msg = Float64MultiArray()
-        msg.data = [seed, sp, r, E]
-        self.bo_result_pub.publish(msg)
+        self.shutdown_agents()
 
     def bo_result_callback(self, msg: Float64MultiArray) -> None:
         print(f"Publishing BO result: see")
