@@ -5,3 +5,4 @@ float64 b                      # UAV drag coefficient
 ---
 # Response
 float64 energy                  # [J] Total energy for one lap of the ring
+float64 path_length            # Time of path in seconds

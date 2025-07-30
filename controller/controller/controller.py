@@ -71,7 +71,7 @@ class Controller(Node):
     def __init__(self) -> None:
         super().__init__("controller")
         self.start_pub = self.create_publisher(
-            Float64MultiArray, "/start_ghs", qos_reliable_tx
+            Float64MultiArray, "/start_ghs", qos_reliable_vol
         )
         self.radius_marker_pub = self.create_publisher(
             Marker, "/comm_radius_marker", qos_reliable_tx
@@ -92,13 +92,21 @@ class Controller(Node):
             Float64MultiArray, "/reset_agents", qos_reliable_vol
         )
 
+        self.reset_agents_sub = self.create_subscription(
+            Float64MultiArray,
+            "/reset_agents",
+            self.reset_position_callback,
+            qos_reliable_vol,
+        )
+        self.reset_response = [False] * len(AGENT_IDS)
+
         self.shutdown_sub = self.create_subscription(
             Empty, "/shutdown", self.shutdown_callback, 1
         )
         self.shutdown = False  # Initialize shutdown as a boolean
 
         self.radius_scheduler = RadiusScheduler(
-            self, self.start_pub, v_max=10.0, eps=0.01
+            self, self.start_pub, v_max=10.0, eps=0.05
         )
         self.create_subscription(
             Float64MultiArray,
@@ -134,8 +142,16 @@ class Controller(Node):
         self.b = 1.0
 
         for aid in AGENT_IDS:
-            proc = launch_agent(aid)
-            self.get_logger().info(f"Launched uav_agent_{aid} (pid {proc.pid})")
+            x, y = AGENT_POSITIONS[aid]
+            proc = launch_agent(aid, x, y)
+        while not all(self.reset_response):
+            rclpy.spin_once(self, timeout_sec=0.1)
+        self.get_logger().info("All agents launched and reset.")
+        self.reset_agents()
+        while not all(self.reset_response):
+            rclpy.spin_once(self, timeout_sec=0.05)
+
+        self.get_logger().info("All agents reset/INIT successfully.")
 
         for aid in AGENT_IDS:
             srv = f"/uav_agent_{aid}/compute_energy"
@@ -144,37 +160,56 @@ class Controller(Node):
             self.get_logger().info(f"Waiting for {srv} …")
             while not cli.wait_for_service(timeout_sec=0.1):
                 self.get_logger().warn(f"{srv} not up yet, waiting…")
+        self.get_logger().info("All energy clients initialized.")
 
-    def calculate_energy(self, aid: int) -> None:
+    def reset_position_callback(self, msg: Float64MultiArray) -> None:
+        """Reset the UAV's position and partition state if the message targets this agent."""
+        if len(msg.data) < 3:
+            self.get_logger().warn("Reset message too short, expected 3 floats.")
+            return
+        if msg.data[0] != -(1.0):
+            return
+        self.reset_response[int(msg.data[1] - 1.0)] = True
+
+    def _on_bo_result(self, msg: Float64MultiArray) -> None:
+        self.get_logger().info("Received BO result")
+
+    def calculate_energy(self, aid: int):
         """
         Fire off all UAV energy requests in parallel and return the sum.
         """
-
         total = 0.0
+        longest_path = 0.0
         for aid, cli in self.energy_clients_dict.items():
             while True:
+                rclpy.spin_once(self, timeout_sec=0.8)
                 req = ComputeEnergy.Request()
                 req.cruise_speed = self.cruise_speed
                 req.a = self.a
                 req.b = self.b
                 future = cli.call_async(req)
                 while rclpy.ok() and not future.done():
-                    rclpy.spin_once(self)
+                    rclpy.spin_once(self, timeout_sec=0.8)
                 try:
                     energy = future.result().energy
                     if energy == -1.0:
                         self.get_logger().warn(f"Agent {aid} not ready, retrying...")
                         continue
                     total += energy
+                    if longest_path < future.result().path_length:
+                        longest_path = future.result().path_length
                     break
                 except Exception:
                     total += float("inf")
                     break
         self.get_logger().info(f"Total energy for all agents: {total:.2f} J")
-        return total
+        return total, longest_path
 
     def reset_agents(self) -> None:
-        self.reset_agent_pub.publish(Empty())
+        self.reset_response = [False] * len(AGENT_IDS)
+        for aid in AGENT_IDS:
+            x, y = AGENT_POSITIONS[aid]
+            self.reset_agent_pub.publish(Float64MultiArray(data=[aid, 1.0, x, y]))
 
     def run_bayes_opt(self):
         while True:
@@ -208,14 +243,9 @@ class Controller(Node):
         self.shutdown_agents()
 
     def bo_result_callback(self, msg: Float64MultiArray) -> None:
-            data = msg.data
-            n = NUM_AGENTS
-            x = np.array(data[0:3*n])         # the joint (seed_x, seed_y, sp) vector
-            r = data[3*n]                     # max_radius
-            E = data[3*n + 1]                 # total_energy
-            cost = r + lambda_BO * E
-            self.thompson_scheduler.observe(x, cost)
-            self.get_logger().info(f"[BO] obs recorded, cost={cost:.3f}")
+        print(f"Publishing BO result: see")
+        seed, sp, r, E = msg.data
+        self.thompson_scheduler.observe(seed, sp, r, E)
 
     def visualize_samples(self) -> None:
         """Visualize the current samples as a plot."""
@@ -241,7 +271,6 @@ class Controller(Node):
         """Handle shutdown signal."""
         self.get_logger().info("Received shutdown signal, shutting down controller.")
         self.shutdown = True
-        self.destroy_node()
 
 
 def main(args=None) -> None:
