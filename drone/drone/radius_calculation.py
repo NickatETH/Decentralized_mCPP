@@ -91,7 +91,6 @@ class RadiusMixin:
             [t_target, rid, sp0, sp1, sp2, ...]
         Only the tuple addressed to *this* agent is processed.
         """
-
         self.reset_radius()  # Reset radius state
         data = msg.data
         if len(data) < 2:
@@ -106,9 +105,15 @@ class RadiusMixin:
         sp = data[idx]
         self.starting_point = sp
 
-        path_idx = int(
-            (t_target + sp) * (len(self.path.coords) - 1) % len(self.path.coords)
-        )
+        # path_idx = int(
+        #     (t_target + sp) * (len(self.path.coords) - 1) % len(self.path.coords)
+        # )
+
+        N = len(self.path.coords)
+        u = (t_target + sp) % 1.0
+
+        path_idx = int(int(u * N) % N)
+
         self.radius_pos = self.path.coords[path_idx]
 
         x, y = self.radius_pos
@@ -180,7 +185,6 @@ class RadiusMixin:
         """Report the best candidate to the root of the fragment."""
         self.ghs_timer.cancel() if self.ghs_timer else None
         rclpy.spin_once(self, timeout_sec=0.1)
-        rclpy.spin_once(self, timeout_sec=0.0)
         rclpy.spin_once(self, timeout_sec=0.0)
         if self.stop_all:
             return
@@ -255,9 +259,9 @@ class RadiusMixin:
                         ]
                     )
 
-                    self.get_logger().info(
-                        f"Agent {self.agent_id} REJECT: NONE FOUND from {src} for fragment {fid}, root {self.frag.root}"
-                    )
+                    # self.get_logger().info(
+                    #     f"Agent {self.agent_id} REJECT: NONE FOUND from {src} for fragment {fid}, root {self.frag.root}"
+                    # )
                     self.ghs_pub.publish(pkt)
                     return
 
@@ -287,6 +291,7 @@ class RadiusMixin:
             )
 
             self.frag.update_max_weight(weight)
+            self.frag.update_max_radius(weight)
             self._merge_fragments(rid, lvl, fid, children)
             self.ghs_pub.publish(init_pkt)
 
@@ -375,6 +380,7 @@ class RadiusMixin:
             )
             self._merge_fragments(rid, lvl, fid, children)
             self.frag.update_max_weight(weight)
+            self.frag.update_max_radius(weight)
 
     def _report_up(self, rid):
         if (
@@ -383,7 +389,7 @@ class RadiusMixin:
             and not self.stop_all
         ):  # Root decides radius
 
-            pkt_r = Float64MultiArray(data=[self.frag.max_weight, rid])
+            pkt_r = Float64MultiArray(data=[self.frag.max_radius, rid])
             if not self.stop_all:
                 self.stop_all = True  # Stop the agent's main loop
                 # send end signal to all children
@@ -418,7 +424,7 @@ class RadiusMixin:
 
                 self.radius_pub.publish(pkt_r)
                 self.get_logger().error(
-                    "Final radius sent to controller: " + str(self.frag.max_weight)
+                    "Final radius sent to controller: " + str(self.frag.max_radius)
                 )
 
                 return True
@@ -477,6 +483,7 @@ class FragmentState:
         self.candidate = None
         self.nbr_iter = 0
         self.max_weight = np.inf
+        self.max_radius = 0.0
 
     def add_child(self, uid):
         """Add a child to this fragment."""
@@ -486,3 +493,8 @@ class FragmentState:
         """Update the maximum weight of this fragment."""
         if weight < self.max_weight:
             self.max_weight = weight
+
+    def update_max_radius(self, radius: float):
+        """Update the maximum radius of this fragment."""
+        if radius > self.max_radius:
+            self.max_radius = radius

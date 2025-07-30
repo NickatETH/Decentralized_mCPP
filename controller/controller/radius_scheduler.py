@@ -10,7 +10,7 @@ class RadiusScheduler:
         node: rclpy.node.Node,
         start_pub,  # the existing publisher
         v_max: float,  # worst‑case UAV speed [m/s]
-        eps: float = 0.2,  # desired accuracy [m]
+        eps: float = 1.0,  # desired accuracy [m]
     ):
         self.v_max = v_max
         self.node = node
@@ -94,8 +94,12 @@ class RadiusScheduler:
     ) -> float:
         """Run all rounds for this sp, blocking until each /radius arrives."""
         self.reset_state()
-        self.L = 2.0 * self.v_max * longest_path  # compensate for longer pahts
+        T_total = longest_path / (0.5 * self.v_max)
+        self.L = 2.0 * self.v_max * T_total  # compensate for longer paths
         self.starting_point = starting_point
+        self.node.get_logger().error(
+            f"[RS] Starting radius calculation with L={self.L:.2f} m, T_total={T_total:.2f} s"
+        )
 
         while True:
             # pick next t
@@ -109,6 +113,10 @@ class RadiusScheduler:
                     )
                     self.visualize_samples()
                     break
+
+            if self.round_id > 20:
+                self.visualize_samples()
+                return self.max_radius
 
             self.round_id += 1
             self._pending_t = t_probe
@@ -133,21 +141,70 @@ class RadiusScheduler:
         return self.max_radius
 
     def visualize_samples(self) -> None:
-        """Visualize the current samples as a plot."""
+        """Visualize the current samples and, optionally, the Lipschitz geometry."""
+        import numpy as np
         import matplotlib.pyplot as plt
-        import matplotlib.patches as patches
 
-        t_values = [t for t, r in self.samples]
-        r_values = [r for t, r in self.samples]
+        if not self.samples:
+            self.node.get_logger().warn("No samples to plot yet.")
+            return
+
+        # ------------- basic scatter plot --------------------
+        t_vals, r_vals = zip(*self.samples)
         plt.figure(figsize=(10, 6))
-        plt.plot(t_values, r_values, marker="o", label="Samples")
-        plt.title("Radius Samples Over Time")
-        plt.xlabel("Time (s)")
+        plt.plot(t_vals, r_vals, "o-", label="Samples")
+        plt.axhline(self.max_radius, ls="--", color="r", label="Max Radius")
+
+        # ------------- (1) global roof -----------------------
+        ts = np.linspace(0, 1, 400)
+        roof = [
+            min(r_k + self.L * abs(t - t_k) for t_k, r_k in self.samples) for t in ts
+        ]
+        plt.plot(ts, roof, "r--", linewidth=1.2, label=f"Roof  (L={self.L:.1f})")
+
+        # ------------- (2) local cones -----------------------
+        for t_k, r_k in self.samples:
+            plt.plot(
+                [t_k, 0], [r_k, r_k + self.L * abs(t_k - 0)], color="0.7", linewidth=0.8
+            )
+            plt.plot(
+                [t_k, 1], [r_k, r_k + self.L * abs(t_k - 1)], color="0.7", linewidth=0.8
+            )
+
+        # ------------- (3) shade next-gap interval ----------
+        if len(self.samples) >= 2:
+            t_probe = self.next_probe_time()
+            if t_probe is not None:
+                # find its bracketing samples
+                i_right = next(
+                    i for i, (t, _) in enumerate(self.samples) if t > t_probe
+                )
+                t0, r0 = self.samples[i_right - 1]
+                t1, r1 = self.samples[i_right]
+                chord = np.interp(ts, [t0, t1], [r0, r1])
+                roof_mid = min(
+                    r_k + self.L * abs(t_probe - t_k) for t_k, r_k in self.samples
+                )
+                gap = roof_mid - np.interp(t_probe, [t0, t1], [r0, r1])
+
+                plt.fill_between(
+                    ts,
+                    chord,
+                    roof,
+                    where=((ts >= t0) & (ts <= t1)),
+                    color="orange",
+                    alpha=0.1,
+                    label=f"Gap ≈ {gap:.2f} m",
+                )
+                plt.axvline(t_probe, color="orange", ls=":", lw=1)
+
+        # ------------- cosmetics -----------------------------
+        plt.title("Radius Samples with Lipschitz Envelope")
+        plt.xlabel("Normalised Time τ")
         plt.ylabel("Radius (m)")
-        plt.grid()
-        plt.legend()
         plt.xlim(0, 1)
-        plt.ylim(0, max(r_values) + 5)
-        plt.axhline(y=self.max_radius, color="r", linestyle="--", label="Max Radius")
-        plt.legend()
+        plt.ylim(0, max(r_vals) + 5)
+        plt.grid(True, linestyle=":")
+        plt.legend(loc="upper left")
+        plt.tight_layout()
         plt.show()
