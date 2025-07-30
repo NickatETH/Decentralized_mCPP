@@ -132,7 +132,8 @@ class RadiusScheduler:
     ) -> float:
         """Run all rounds for this sp, blocking until each /radius arrives."""
         self.reset_state()
-        T_total = longest_path / (0.5 * self.v_max)
+        print(f"longest path: {longest_path:.2f} m")
+        T_total = longest_path / (self.v_max)
         self.L = 2.0 * self.v_max * T_total  # compensate for longer paths
         self.node.get_logger().error(
             f"[RS] Starting radius calculation with L={self.L:.2f} m, T_total={T_total:.2f} s"
@@ -199,16 +200,16 @@ class RadiusScheduler:
         roof = [
             min(r_k + self.L * abs(t - t_k) for t_k, r_k in self.samples) for t in ts
         ]
-        plt.plot(ts, roof, "r--", linewidth=1.2, label=f"Roof  (L={self.L:.1f})")
+        plt.plot(ts, roof, color="green", linewidth=1.2, label="Lipschitz Roof")
 
-        # ------------- (2) local cones -----------------------
-        for t_k, r_k in self.samples:
-            plt.plot(
-                [t_k, 0], [r_k, r_k + self.L * abs(t_k - 0)], color="0.7", linewidth=0.8
-            )
-            plt.plot(
-                [t_k, 1], [r_k, r_k + self.L * abs(t_k - 1)], color="0.7", linewidth=0.8
-            )
+        # # ------------- (2) local cones -----------------------
+        # for t_k, r_k in self.samples:
+        #     plt.plot(
+        #         [t_k, 0], [r_k, r_k + self.L * abs(t_k - 0)], color="0.7", linewidth=0.8
+        #     )
+        #     plt.plot(
+        #         [t_k, 1], [r_k, r_k + self.L * abs(t_k - 1)], color="0.7", linewidth=0.8
+        #     )
 
         # ------------- (3) shade next-gap interval ----------
         if len(self.samples) >= 2:
