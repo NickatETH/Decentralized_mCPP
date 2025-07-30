@@ -224,13 +224,16 @@ class PartitionMixin:
             all_converged = all(nb[3] >= 1.0 for nb in self.neighbours)
 
             if all_converged:
-                if self.converged > 30.0 and all(nb[3] >= 30.0 for nb in self.neighbours):
+                if self.converged > 10.0 and all(
+                    nb[3] >= 10.0 for nb in self.neighbours
+                ):
                     self.get_logger().info(f"Agent {self.agent_id} converged forall: ")
 
                     self.pb_timer.cancel()
                     self.run_stc()
                 else:
                     self.converged += 1.0
+                    rclpy.spin_once(self, timeout_sec=0.05)
                     # self.get_logger().info(
                     #     f"Agent {self.agent_id} converged: {self.converged:.1f} / 10.0"
                     # )

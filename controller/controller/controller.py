@@ -18,6 +18,7 @@ NUM_CANDIDATES = 100
 RANDOM_SEED = 42
 lambda_BO = 1.0
 MAX_EVALS = 1000
+PATH_SCALE = 100.0
 
 np.random.seed(RANDOM_SEED)
 
@@ -193,7 +194,10 @@ class Controller(Node):
                 try:
                     energy = future.result().energy
                     if energy == -1.0:
-                        self.get_logger().warn(f"Agent {aid} not ready, retrying...", throttle_duration_sec=1.0)
+                        self.get_logger().warn(
+                            f"Agent {aid} not ready, retrying...",
+                            throttle_duration_sec=1.0,
+                        )
                         continue
                     total += energy
                     if longest_path < future.result().path_length:
@@ -218,7 +222,7 @@ class Controller(Node):
             x = self.thompson_scheduler.next_point()
             if x is None:
                 break
-            
+
             for i in x:
                 i = float(np.float32(np.round(i, 4)))
 
@@ -242,6 +246,7 @@ class Controller(Node):
                 self.reset_agent_pub.publish(msg)
 
             total_energy, longest_path = self.calculate_energy()
+            longest_path *= PATH_SCALE
             max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
 
             out = Float32MultiArray()
