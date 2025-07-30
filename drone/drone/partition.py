@@ -1,7 +1,7 @@
 import rclpy
 from shapely.ops import split
 from shapely.geometry import LineString, Point, Polygon
-from std_msgs.msg import Float32MultiArray
+from example_interfaces.msg import Float32MultiArray
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point as RosPoint
 from typing import Tuple, List
@@ -224,7 +224,7 @@ class PartitionMixin:
             all_converged = all(nb[3] >= 1.0 for nb in self.neighbours)
 
             if all_converged:
-                if self.converged > 4.0 and all(nb[3] >= 4.0 for nb in self.neighbours):
+                if self.converged > 30.0 and all(nb[3] >= 30.0 for nb in self.neighbours):
                     self.get_logger().info(f"Agent {self.agent_id} converged forall: ")
 
                     self.pb_timer.cancel()

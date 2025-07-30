@@ -6,7 +6,7 @@ import numpy as np
 from geometry_msgs.msg import PointStamped
 from rclpy.duration import Duration
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from std_msgs.msg import Float32MultiArray, Float64MultiArray
+from example_interfaces.msg import Float32MultiArray
 
 
 # QoS shortcuts --------------------------------------------------------------
@@ -49,10 +49,10 @@ class RadiusMixin:
             Float32MultiArray, "/ghs_packet", qos_reliable_vol
         )
         self.radius_pub = self.create_publisher(
-            Float64MultiArray, "/radius", qos_reliable_vol
+            Float32MultiArray, "/radius", qos_reliable_vol
         )
         self.start_sub = self.create_subscription(
-            Float64MultiArray, "/start_ghs", self.start_cb, qos_reliable_vol
+            Float32MultiArray, "/start_ghs", self.start_cb, qos_reliable_vol
         )
         self.packet_sub = self.create_subscription(
             Float32MultiArray, "/ghs_packet", self.ghs_cb, qos_reliable_vol
@@ -85,9 +85,9 @@ class RadiusMixin:
             self.nbr_table[uid] = (msg.point.x, msg.point.y, msg.point.z)
 
     # Start‑GHS handler
-    def start_cb(self, msg: Float64MultiArray):
+    def start_cb(self, msg: Float32MultiArray):
         """
-        Expects a Float64MultiArray whose length is a multiple of 4:
+        Expects a Float32MultiArray whose length is a multiple of 4:
             [t_target, rid, sp0, sp1, sp2, ...]
         Only the tuple addressed to *this* agent is processed.
         """
@@ -365,7 +365,7 @@ class RadiusMixin:
             and not self.stop_all
         ):  # Root decides radius
 
-            pkt_r = Float64MultiArray(data=[self.frag.max_radius, rid])
+            pkt_r = Float32MultiArray(data=[self.frag.max_radius, rid])
             if not self.stop_all:
                 self.stop_all = True  # Stop the agent's main loop
                 # send end signal to all children

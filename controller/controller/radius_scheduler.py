@@ -1,6 +1,6 @@
 import rclpy
 import numpy as np
-from std_msgs.msg import Float64MultiArray
+from example_interfaces.msg import Float32MultiArray
 
 
 class RadiusScheduler:
@@ -106,7 +106,7 @@ class RadiusScheduler:
             probe_t = float(np.float32(np.round(probe_t, 4)))  # exactly 4 decimals
         return probe_t
 
-    def radius_callback(self, msg: Float64MultiArray) -> None:
+    def radius_callback(self, msg: Float32MultiArray) -> None:
         """Callback when `/radius` arrives."""
         r, t_probe = msg.data
         if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-3:
@@ -128,7 +128,7 @@ class RadiusScheduler:
         self._pending_t = None
 
     def calculate_connectivity(
-        self, starting_point: float, longest_path: float
+        self, starting_point, longest_path: float
     ) -> float:
         """Run all rounds for this sp, blocking until each /radius arrives."""
         self.reset_state()
@@ -161,8 +161,8 @@ class RadiusScheduler:
             rclpy.spin_once(self.node, timeout_sec=0.0)
             rclpy.spin_once(self.node, timeout_sec=0.0)
 
-            payload = [t_probe, t_probe] + [0.25, 0.4, 0.5, 0.6]
-            self.pub.publish(Float64MultiArray(data=payload))
+            payload = np.concatenate(([t_probe, t_probe], starting_point))
+            self.pub.publish(Float32MultiArray(data=payload))
             self.node.get_logger().warn(
                 f"[RS] round {self.round_id}: probe t={t_probe:.3f}"
             )
