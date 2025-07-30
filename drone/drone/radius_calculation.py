@@ -75,7 +75,7 @@ class RadiusMixin:
         self.nbr_table.clear()
         self.nbr_attempt_time = None
         now = self.get_clock().now()  # get rid of old stuff
-        while now + Duration(seconds=0.1) > self.get_clock().now():
+        while now + Duration(seconds=0.05) > self.get_clock().now():
             rclpy.spin_once(self, timeout_sec=0.01)
         self.stop_all = False
 
@@ -126,11 +126,11 @@ class RadiusMixin:
 
         self.frag = FragmentState(self.agent_id)  # reset fragment state
         now = self.get_clock().now()  # get rid of old stuff
-        while now + Duration(seconds=0.2) > self.get_clock().now():
+        while now + Duration(seconds=0.05) > self.get_clock().now():
             rclpy.spin_once(self, timeout_sec=0.01)
         if self.ghs_timer is not None:
             self.ghs_timer.cancel()
-        self.ghs_timer = self.create_timer(0.1, lambda: self._report_best(rid))
+        self.ghs_timer = self.create_timer(0.05, lambda: self._report_best(rid))
 
     def _compute_best_out(self):
         # 1) collect all neighbours except your own fragment
@@ -155,31 +155,7 @@ class RadiusMixin:
             if self.nbr_attempt_time + Duration(seconds=1.5) > self.get_clock().now():
                 return
             else:
-                # self.get_logger().info(
-                #     f"Agent {self.agent_id} has no more neighbours to try: {neighbours}: time {self.nbr_attempt_time}, now {self.get_clock().now()}"
-                # )
-                # self.nbr_attempt_time = None
-                # rclpy.spin_once(self, timeout_sec=0.1)
-                # # pkt_r = Float64MultiArray(data=[0.0, -1.0])
-                # # self.radius_pub.publish(pkt_r)
-                # self.stop_all = True  # Stop the agent's main loop
-                # for child in self.frag.children:
-                #     pkt = Float32MultiArray(
-                #         data=[
-                #             4,
-                #             self.current_rid,
-                #             self.agent_id,
-                #             child,
-                #             self.frag.frag_id,
-                #             self.frag.level,
-                #             self.frag.max_weight,
-                #         ]
-                #     )
-                #     self.ghs_pub.publish(pkt)
-                #     print("Aborting for nbrs")
                 return
-
-            self.frag.nbr_iter = 0  # reset neighbour iteration
 
     def _report_best(self, rid: float):
         """Report the best candidate to the root of the fragment."""
@@ -274,9 +250,9 @@ class RadiusMixin:
                 # print(f"Agent {self.agent_id} sent TEST to root {self.frag.root}")
 
         elif typ == 1:  # ACCEPT
-            self.get_logger().info(
-                f"Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
-            )
+            # self.get_logger().info(
+            #     f"Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
+            # )
             init_pkt = Float32MultiArray(
                 data=[
                     5,
@@ -375,9 +351,9 @@ class RadiusMixin:
             # Check its not trying to merge with itself
             if fid == self.frag.frag_id:
                 return
-            self.get_logger().info(
-                f"Secondary: Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
-            )
+            # self.get_logger().info(
+            #     f"Secondary: Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
+            # )
             self._merge_fragments(rid, lvl, fid, children)
             self.frag.update_max_weight(weight)
             self.frag.update_max_radius(weight)

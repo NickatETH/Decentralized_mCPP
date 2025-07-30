@@ -1,4 +1,5 @@
 import rclpy
+import numpy as np
 from std_msgs.msg import Float64MultiArray
 
 
@@ -32,45 +33,83 @@ class RadiusScheduler:
         self.time_of_reset = self.node.get_clock().now()
         self.ghs_timer = None
 
+    # ---------------------------------------------------------------------
     def roof(self, t: float) -> float:
-        """Upper envelope U(t) = min_k ( r_k + L * |t - t_k| ).
-
-        `self.L` must already be expressed for the normalised domain [0,1].
         """
+        Lipschitz roof  U(t) = min_k ( r_k + L · |t − t_k| ).
+        Returns +∞ if no samples have been taken yet.
+        """
+        if not self.samples:
+            return float("inf")
         return min(r_k + self.L * abs(t - t_k) for t_k, r_k in self.samples)
 
+    # ---------------------------------------------------------------------
+
     def next_probe_time(self) -> float | None:
-        """Return the parameter t where the gap between roof and chord is largest.
-
-        Returns `None` when either:
-        * there are fewer than two samples, or
-        * the maximum gap is ≤ self.eps (estimation complete).
         """
-        if len(self.samples) < 2:
-            return None
+        1. Find τ* where the Lipschitz roof U(τ) attains its global maximum.
+        2. If U_max − max_radius ≤ ε  ⇒  finished (return None).
+        3. Otherwise return τ* (rounded to the 0.0001 grid) **provided τ* has
+        not already been sent or sampled**.
+        """
+        import numpy as np
+        import math
 
-        best_gap = 0.0
-        best_t: float | None = None
+        if len(self.samples) == 0:
+            return 0.0  # first ever probe
 
+        # τ values already “used” (sampled or still awaiting a reply)
+        used_ts = {t for t, _ in self.samples}
+        if self._pending_t is not None:
+            used_ts.add(self._pending_t)
+
+        best_U = -math.inf
+        probe_t = None  # τ we will return (may remain None)
+
+        # evaluate U at every sample (cheap and sometimes the maximum)
+        for t_k, _ in self.samples:
+            U_val = self.roof(t_k)
+            if U_val > best_U:
+                best_U, probe_t = U_val, t_k  # may be a duplicate—check later
+
+        # evaluate U at every valid intersection between adjacent cones
         for (t0, r0), (t1, r1) in zip(self.samples, self.samples[1:]):
-            t_mid = 0.5 * (t0 + t1)
-            chord = 0.5 * (r0 + r1)
-            gap = self.roof(t_mid) - chord
-            if gap > best_gap:
-                best_gap, best_t = gap, t_mid
+            if self.L == 0:
+                continue
+            t_star = 0.5 * (t0 + t1) + (r1 - r0) / (2 * self.L)
+            if not (t0 < t_star < t1):
+                continue
+            U_star = self.roof(t_star)
+            if U_star > best_U:
+                best_U, probe_t = U_star, t_star
 
-        if best_gap <= self.eps:
+        gap = best_U - self.max_radius
+        if gap <= self.eps:
             self.node.get_logger().info(
-                f"Final max radius: {self.max_radius:.2f} m, gap = {best_gap:.3g} m"
+                f"ε‑optimal reached: max radius = {self.max_radius:.2f} m, "
+                f"roof gap = {gap:.3g} m ≤ ε = {self.eps}"
             )
-            return None
+            return None  # done!
 
-        return best_t
+        GRID = 0.0001
+        TOL = 1e-7
+        probe_t = float(np.round(probe_t / GRID) * GRID)  # snap to grid
+        if any(abs(probe_t - t) < TOL for t in used_ts):
+            # try +0.01 or -0.01
+            for delta in (0.01, -0.01):
+                candidate = float(np.round((probe_t + delta) / GRID) * GRID)
+                if all(abs(candidate - t) > TOL for t in used_ts):
+                    probe_t = candidate
+                    break
+
+        if probe_t is not None:
+            probe_t = float(np.float32(np.round(probe_t, 4)))  # exactly 4 decimals
+        return probe_t
 
     def radius_callback(self, msg: Float64MultiArray) -> None:
         """Callback when `/radius` arrives."""
         r, t_probe = msg.data
-        if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-9:
+        if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-3:
             # record
             self.samples.append((t_probe, r))
             self.samples.sort(key=lambda x: x[0])
@@ -79,7 +118,6 @@ class RadiusScheduler:
             self.node.get_logger().warn(
                 f"[RS] got r({t_probe:.3f})={r:.3f}; max={self.max_radius:.3f}"
             )
-            print("\n \n")
         # check if we already have it
         elif any(abs(t_probe - t) < 1e-9 for t, _ in self.samples):
             self.node.get_logger().warn(
@@ -96,7 +134,6 @@ class RadiusScheduler:
         self.reset_state()
         T_total = longest_path / (0.5 * self.v_max)
         self.L = 2.0 * self.v_max * T_total  # compensate for longer paths
-        self.starting_point = starting_point
         self.node.get_logger().error(
             f"[RS] Starting radius calculation with L={self.L:.2f} m, T_total={T_total:.2f} s"
         )
@@ -120,12 +157,14 @@ class RadiusScheduler:
 
             self.round_id += 1
             self._pending_t = t_probe
-            rclpy.spin_once(self.node, timeout_sec=0.5)
+            rclpy.spin_once(self.node, timeout_sec=0.1)
+            rclpy.spin_once(self.node, timeout_sec=0.0)
+            rclpy.spin_once(self.node, timeout_sec=0.0)
 
             payload = [t_probe, t_probe] + [0.25, 0.4, 0.5, 0.6]
             self.pub.publish(Float64MultiArray(data=payload))
             self.node.get_logger().warn(
-                f"[RS] round {self.round_id}: probe t={t_probe:.3f}, sp={starting_point:.3f}"
+                f"[RS] round {self.round_id}: probe t={t_probe:.3f}"
             )
             self.time_of_reset = self.node.get_clock().now()
 
