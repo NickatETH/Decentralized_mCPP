@@ -50,7 +50,7 @@ class EnergyMixin:
         for i, speed in enumerate(speeds):
             drag = request.b * speed**2
             thrust = request.a / (speed**2)
-            power = drag + thrust
+            power = 300
             turnfactor = 1.0
 
             dist = self._distance(coords[i], coords[i + 1])

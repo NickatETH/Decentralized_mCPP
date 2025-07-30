@@ -1,6 +1,7 @@
 import rclpy
 import numpy as np
 from example_interfaces.msg import Float32MultiArray
+from collections import deque
 
 
 class RadiusScheduler:
@@ -22,6 +23,7 @@ class RadiusScheduler:
         self.samples = []
         self.max_radius = 0.0  # highest r(t) seen so far
         self.starting_point = 0.0
+        self.r_buffer = deque(maxlen=3)
 
     def reset_state(self) -> None:
         """Reset the state for a new round."""
@@ -109,6 +111,8 @@ class RadiusScheduler:
     def radius_callback(self, msg: Float32MultiArray) -> None:
         """Callback when `/radius` arrives."""
         r, t_probe = msg.data
+        self.r_buffer.append(r)
+        r = float(np.median(self.r_buffer)) 
         if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-3:
             # record
             self.samples.append((t_probe, r))
@@ -149,11 +153,9 @@ class RadiusScheduler:
                     self.node.get_logger().error(
                         f"!!!Final max radius: {self.max_radius:.2f} m"
                     )
-                    self.visualize_samples()
                     break
 
-            if self.round_id > 20:
-                self.visualize_samples()
+            if self.round_id > 50:
                 return self.max_radius
 
             self.round_id += 1

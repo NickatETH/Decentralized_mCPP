@@ -4,6 +4,7 @@ from typing import Dict
 
 import rclpy
 import numpy as np
+import matplotlib.pyplot as plt
 from rclpy.node import Node
 from interface.srv import ComputeEnergy
 from example_interfaces.msg import Empty, Float32MultiArray
@@ -13,11 +14,11 @@ from .radius_scheduler import RadiusScheduler
 from .thompson_scheduler import ThompsonScheduler
 import random
 
-NUM_AGENTS = 5
-NUM_CANDIDATES = 100
+NUM_AGENTS = 4
+NUM_CANDIDATES = 1000
 RANDOM_SEED = 42
 lambda_BO = 1.0
-MAX_EVALS = 1000
+MAX_EVALS = 3
 PATH_SCALE = 100.0
 
 np.random.seed(RANDOM_SEED)
@@ -33,9 +34,9 @@ BOUNDARY_ARGS = [
     "--ymin",
     "0.0",
     "--xmax",
-    "50.0",
+    "20.0",
     "--ymax",
-    "50.0",
+    "20.0",
 ]
 
 # QoS shortcuts --------------------------------------------------------------
@@ -74,6 +75,9 @@ def launch_agent(aid: int) -> subprocess.Popen:
 class Controller(Node):
     def __init__(self) -> None:
         super().__init__("controller")
+
+        self.cost_history = []
+
         self.start_pub = self.create_publisher(
             Float32MultiArray, "/start_ghs", qos_reliable_vol
         )
@@ -249,11 +253,16 @@ class Controller(Node):
             longest_path *= PATH_SCALE
             max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
 
+            self.cost_history.append(
+                (total_energy * lambda_BO + max_radius)
+            )
+
             out = Float32MultiArray()
             out.data = x.tolist() + [max_radius, total_energy]
             self.bo_result_pub.publish(out)
 
         self.get_logger().info("BO complete ‐ shutting down agents")
+        self.plot_convergence()
         self.total_energy = 0.0
         self.shutdown_agents()
 
@@ -262,12 +271,36 @@ class Controller(Node):
         data = msg.data
         x = np.array(data[:-2], dtype=float)
         max_radius, total_energy = data[-2], data[-1]
-        self.thompson_scheduler.observe(x, total_energy + lambda_BO * max_radius)
+        self.thompson_scheduler.observe(x, total_energy * lambda_BO + max_radius)
 
     def shutdown_callback(self, msg: Empty) -> None:
         """Handle shutdown signal."""
         self.get_logger().info("Received shutdown signal, shutting down controller.")
         self.shutdown = True
+
+    def plot_convergence(self) -> None:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        from matplotlib.ticker import MaxNLocator
+
+        costs = np.array(self.cost_history)
+        best = np.minimum.accumulate(costs)
+        iterations = np.arange(1, len(costs) + 1)
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(iterations, costs, marker='o', linestyle='--', label='Observed cost')
+        ax.plot(iterations, best,  marker='s', linestyle='-',  label='Best so far')
+
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel('Cost = r + λ·E')
+        ax.set_title('Bayesian Optimization Convergence')
+
+        # ensure only integer ticks
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+        fig.tight_layout()
+        fig.savefig('bo_convergence.png', dpi=300)
+        plt.close(fig)
 
 
 def main(args=None) -> None:
