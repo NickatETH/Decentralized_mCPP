@@ -38,21 +38,13 @@ class EnergyMixin:
         if len(self.path.coords) < 2:
             raise ValueError("ring must contain at least two vertices")
 
-        # Pre‑compute numeric coordinate list ( not required for energy)
-        coords = [p for p in self.path.coords]
-        # Offset the coords order by starting_point index
-        if isinstance(request.starting_point, int):
-            start_idx = request.starting_point % len(coords)
-        else:
-            # Find the closest point index to the given starting_point (float, as x)
-            dists = [math.hypot(p[0] - request.starting_point, p[1]) for p in coords]
-            start_idx = dists.index(min(dists))
-        coords = coords[start_idx:] + coords[:start_idx]
+        coords = list(self.path.coords)
 
         # Build a constant speed list matching segment count
         speeds = [request.cruise_speed] * (len(coords) - 1)
 
         energy = 0.0
+        distance = 0.0
 
         # --- Straight‑segment contribution ----------------------------------------
         for i, speed in enumerate(speeds):
@@ -80,12 +72,9 @@ class EnergyMixin:
                 turnfactor = 1.5
 
             energy += power * time * turnfactor
+            distance += dist
 
         response.energy = energy
-        response.path_length = (
-            sum(
-                self._distance(coords[i], coords[i + 1]) for i in range(len(coords) - 1)
-            )
-        ) / request.cruise_speed
+        response.path_length = distance
 
         return response

@@ -3,6 +3,8 @@ from typing import Tuple
 import rclpy
 
 import numpy as np
+from shapely.geometry import Point, LinearRing
+
 from geometry_msgs.msg import PointStamped
 from rclpy.duration import Duration
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
@@ -105,16 +107,11 @@ class RadiusMixin:
         sp = data[idx]
         self.starting_point = sp
 
-        # path_idx = int(
-        #     (t_target + sp) * (len(self.path.coords) - 1) % len(self.path.coords)
-        # )
-
-        N = len(self.path.coords)
         u = (t_target + sp) % 1.0
+        p: Point = self.path.interpolate(u, normalized=True)
 
-        path_idx = int(int(u * N) % N)
-
-        self.radius_pos = self.path.coords[path_idx]
+        self.radius_pos = (p.x, p.y)
+        print(f"Agent: {self.agent_id}, radius_pos: {self.radius_pos}")
 
         x, y = self.radius_pos
         msg = PointStamped()
@@ -268,7 +265,7 @@ class RadiusMixin:
 
             self.frag.update_max_weight(weight)
             self.frag.update_max_radius(weight)
-            self._merge_fragments(rid, lvl, fid, children)
+            self._merge_fragments(rid, lvl, fid, weight, children)
             self.ghs_pub.publish(init_pkt)
 
             # print(f"Fragment after: {self.frag.__dict__}")
@@ -348,15 +345,19 @@ class RadiusMixin:
             # self.get_logger().warn(
             #     f"Agent {self.agent_id} received CLEAN MERGE from N: {src} for fragment {fid}, root {self.frag.root}"
             # )
+
             # Check its not trying to merge with itself
             if fid == self.frag.frag_id:
                 return
             # self.get_logger().info(
+            #     f"SECEND Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, weight: {weight}, frag rad {self.frag.max_radius}, "
+            # )
+            # self.get_logger().info(
             #     f"Secondary: Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
             # )
-            self._merge_fragments(rid, lvl, fid, children)
             self.frag.update_max_weight(weight)
             self.frag.update_max_radius(weight)
+            self._merge_fragments(rid, lvl, fid, weight, children)
 
     def _report_up(self, rid):
         if (
@@ -407,8 +408,11 @@ class RadiusMixin:
         return False
 
     # fragment‑merge rule
-    def _merge_fragments(self, rid, other_level, other_fid, children):
+    def _merge_fragments(self, rid, other_level, other_fid, other_max_rad, children):
         old_fid = self.frag.root
+        if other_max_rad > self.frag.max_radius:
+            self.frag.update_max_radius(other_max_rad)
+
         if self.frag.level == other_level:
             self.frag.level += 1
             self.frag.frag_id = min(self.frag.frag_id, other_fid)
