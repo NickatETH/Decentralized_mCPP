@@ -111,7 +111,6 @@ class RadiusMixin:
         p: Point = self.path.interpolate(u, normalized=True)
 
         self.radius_pos = (p.x, p.y)
-        print(f"Agent: {self.agent_id}, radius_pos: {self.radius_pos}")
 
         x, y = self.radius_pos
         msg = PointStamped()

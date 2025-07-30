@@ -8,6 +8,8 @@
   <license>TODO: License declaration</license>
 
 <exec_depend>interface</exec_depend>
+<depend>example_interfaces</depend>
+  
 <depend>rclpy</depend>
 
   <export>
