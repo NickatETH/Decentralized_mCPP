@@ -13,7 +13,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point as RosPoint
-from std_msgs.msg import Float64MultiArray, Empty
+from example_interfaces.msg import Empty, Float32MultiArray
 
 from shapely.geometry import Polygon
 
@@ -71,23 +71,26 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
         )
 
         self.reset_sub = self.create_subscription(
-            Float64MultiArray,
+            Float32MultiArray,
             "/reset_agents",
             self.reset_position_callback,
             qos_reliable_vol,
         )
         self.reset_pub = self.create_publisher(
-            Float64MultiArray, "/reset_agents", qos_reliable_vol
+            Float32MultiArray, "/reset_agents", qos_reliable_vol
         )
 
         self.prep_radiusmixin(agent_id)  # Initialize radius mixin
         self.pb_timer = None
         self.get_logger().info(f"UAV agent {self.agent_id} initialized ")
-        self.reset_pub.publish(
-            Float64MultiArray(data=[-(1.0), self.agent_id, 0.0, 0.0])
-        )
+        for i in range(5):
+            self.reset_pub.publish(
+                Float32MultiArray(data=[-(1.0), self.agent_id, 0.0, 0.0])
+            )
+            rclpy.spin_once(self, timeout_sec=0.5)
+            
 
-    def reset_position_callback(self, msg: Float64MultiArray) -> None:
+    def reset_position_callback(self, msg: Float32MultiArray) -> None:
         """Reset the UAV's position and partition state if the message targets this agent."""
         if len(msg.data) < 3:
             self.get_logger().warn("Reset message too short, expected 3 floats.")
@@ -104,7 +107,7 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
 
         # pub ok
         self.reset_pub.publish(
-            Float64MultiArray(
+            Float32MultiArray(
                 data=[-(msg.data[1]), self.agent_id, position[0], position[1]]
             )
         )

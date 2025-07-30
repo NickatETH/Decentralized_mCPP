@@ -6,7 +6,7 @@ import rclpy
 import numpy as np
 from rclpy.node import Node
 from interface.srv import ComputeEnergy
-from std_msgs.msg import Float64MultiArray, Empty
+from example_interfaces.msg import Empty, Float32MultiArray
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from visualization_msgs.msg import Marker  # Add this import
 from .radius_scheduler import RadiusScheduler
@@ -14,7 +14,7 @@ from .thompson_scheduler import ThompsonScheduler
 import random
 
 NUM_AGENTS = 5
-NUM_CANDIDATES = 1000
+NUM_CANDIDATES = 100
 RANDOM_SEED = 42
 lambda_BO = 1.0
 MAX_EVALS = 1000
@@ -74,29 +74,29 @@ class Controller(Node):
     def __init__(self) -> None:
         super().__init__("controller")
         self.start_pub = self.create_publisher(
-            Float64MultiArray, "/start_ghs", qos_reliable_vol
+            Float32MultiArray, "/start_ghs", qos_reliable_vol
         )
         self.radius_marker_pub = self.create_publisher(
             Marker, "/comm_radius_marker", qos_reliable_tx
         )
 
         self.bo_result_pub = self.create_publisher(
-            Float64MultiArray, "/bo_results", qos_reliable_vol
+            Float32MultiArray, "/bo_results", qos_reliable_vol
         )
         self.bo_result_sub = self.create_subscription(
-            Float64MultiArray, "/bo_results", self.bo_result_callback, qos_reliable_vol
+            Float32MultiArray, "/bo_results", self.bo_result_callback, qos_reliable_vol
         )
 
         self.kill_agent_pub = self.create_publisher(
-            Float64MultiArray, "/kill_agents", qos_reliable_vol
+            Float32MultiArray, "/kill_agents", qos_reliable_vol
         )
 
         self.reset_agent_pub = self.create_publisher(
-            Float64MultiArray, "/reset_agents", qos_reliable_vol
+            Float32MultiArray, "/reset_agents", qos_reliable_vol
         )
 
         self.reset_agents_sub = self.create_subscription(
-            Float64MultiArray,
+            Float32MultiArray,
             "/reset_agents",
             self.reset_position_callback,
             qos_reliable_vol,
@@ -112,7 +112,7 @@ class Controller(Node):
             self, self.start_pub, v_max=10.0, eps=0.05
         )
         self.create_subscription(
-            Float64MultiArray,
+            Float32MultiArray,
             "/radius",
             self.radius_scheduler.radius_callback,
             qos_reliable_vol,
@@ -144,6 +144,7 @@ class Controller(Node):
         for aid in AGENT_IDS:
             proc = launch_agent(aid)
         while not all(self.reset_response):
+            print(self.reset_response)
             rclpy.spin_once(self, timeout_sec=0.1)
         self.get_logger().info("All agents launched and reset.")
         self.reset_agents()
@@ -161,16 +162,19 @@ class Controller(Node):
                 self.get_logger().warn(f"{srv} not up yet, waiting…")
         self.get_logger().info("All energy clients initialized.")
 
-    def reset_position_callback(self, msg: Float64MultiArray) -> None:
+    def reset_position_callback(self, msg: Float32MultiArray) -> None:
         """Reset the UAV's position and partition state if the message targets this agent."""
         if len(msg.data) < 3:
             self.get_logger().warn("Reset message too short, expected 3 floats.")
             return
         if msg.data[0] != -(1.0):
+            self.get_logger().warn(
+                f"Reset message not for this agent: {msg.data[0]} != -1.0"
+            )
             return
         self.reset_response[int(msg.data[1] - 1.0)] = True
 
-    def calculate_energy(self, aid: int):
+    def calculate_energy(self):
         """
         Fire off all UAV energy requests in parallel and return the sum.
         """
@@ -189,7 +193,7 @@ class Controller(Node):
                 try:
                     energy = future.result().energy
                     if energy == -1.0:
-                        self.get_logger().warn(f"Agent {aid} not ready, retrying...")
+                        self.get_logger().warn(f"Agent {aid} not ready, retrying...", throttle_duration_sec=1.0)
                         continue
                     total += energy
                     if longest_path < future.result().path_length:
@@ -205,34 +209,42 @@ class Controller(Node):
         self.reset_response = [False] * len(AGENT_IDS)
         for aid in AGENT_IDS:
             x, y = AGENT_POSITIONS[aid]
-            self.reset_agent_pub.publish(Float64MultiArray(data=[aid, 1.0, x, y]))
+            self.reset_agent_pub.publish(Float32MultiArray(data=[aid, 1.0, x, y]))
 
     def run_bayes_opt(self):
         while True:
+            self.get_logger().info("another BO round!")
             rclpy.spin_once(self, timeout_sec=0.0)
             x = self.thompson_scheduler.next_point()
             if x is None:
                 break
+            
+            for i in x:
+                i = float(np.float32(np.round(i, 4)))
 
             n = NUM_AGENTS
             seed_xs = x[0:n]
             seed_ys = x[n : 2 * n]
             sps = x[2 * n : 3 * n]
+            self.get_logger().info(
+                f"BO round with seeds: {seed_xs}, {seed_ys}, sps: {sps}"
+            )
 
             for aid in AGENT_IDS:
-                msg = Float64MultiArray(
+                msg = Float32MultiArray(
                     data=[
                         float(aid),
+                        1.0,
                         float(seed_xs[aid - 1]),
                         float(seed_ys[aid - 1]),
                     ]
                 )
-            self.reset_agent_pub.publish(msg)
+                self.reset_agent_pub.publish(msg)
 
-            max_radius = self.radius_scheduler.calculate_connectivity(sps)
-            total_energy = self.calculate_energy()
+            total_energy, longest_path = self.calculate_energy()
+            max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
 
-            out = Float64MultiArray()
+            out = Float32MultiArray()
             out.data = x.tolist() + [max_radius, total_energy]
             self.bo_result_pub.publish(out)
 
@@ -240,10 +252,12 @@ class Controller(Node):
         self.total_energy = 0.0
         self.shutdown_agents()
 
-    def bo_result_callback(self, msg: Float64MultiArray) -> None:
+    def bo_result_callback(self, msg: Float32MultiArray) -> None:
         print(f"Publishing BO result: see")
-        seed, sp, r, E = msg.data
-        self.thompson_scheduler.observe(seed, sp, r, E)
+        data = msg.data
+        x = np.array(data[:-2], dtype=float)
+        max_radius, total_energy = data[-2], data[-1]
+        self.thompson_scheduler.observe(x, total_energy + lambda_BO * max_radius)
 
     def shutdown_callback(self, msg: Empty) -> None:
         """Handle shutdown signal."""

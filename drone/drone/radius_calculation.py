@@ -3,10 +3,12 @@ from typing import Tuple
 import rclpy
 
 import numpy as np
+from shapely.geometry import Point, LinearRing
+
 from geometry_msgs.msg import PointStamped
 from rclpy.duration import Duration
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from std_msgs.msg import Float32MultiArray, Float64MultiArray
+from example_interfaces.msg import Float32MultiArray
 
 
 # QoS shortcuts --------------------------------------------------------------
@@ -49,10 +51,10 @@ class RadiusMixin:
             Float32MultiArray, "/ghs_packet", qos_reliable_vol
         )
         self.radius_pub = self.create_publisher(
-            Float64MultiArray, "/radius", qos_reliable_vol
+            Float32MultiArray, "/radius", qos_reliable_vol
         )
         self.start_sub = self.create_subscription(
-            Float64MultiArray, "/start_ghs", self.start_cb, qos_reliable_vol
+            Float32MultiArray, "/start_ghs", self.start_cb, qos_reliable_vol
         )
         self.packet_sub = self.create_subscription(
             Float32MultiArray, "/ghs_packet", self.ghs_cb, qos_reliable_vol
@@ -85,9 +87,9 @@ class RadiusMixin:
             self.nbr_table[uid] = (msg.point.x, msg.point.y, msg.point.z)
 
     # Start‑GHS handler
-    def start_cb(self, msg: Float64MultiArray):
+    def start_cb(self, msg: Float32MultiArray):
         """
-        Expects a Float64MultiArray whose length is a multiple of 4:
+        Expects a Float32MultiArray whose length is a multiple of 4:
             [t_target, rid, sp0, sp1, sp2, ...]
         Only the tuple addressed to *this* agent is processed.
         """
@@ -105,16 +107,10 @@ class RadiusMixin:
         sp = data[idx]
         self.starting_point = sp
 
-        # path_idx = int(
-        #     (t_target + sp) * (len(self.path.coords) - 1) % len(self.path.coords)
-        # )
-
-        N = len(self.path.coords)
         u = (t_target + sp) % 1.0
+        p: Point = self.path.interpolate(u, normalized=True)
 
-        path_idx = int(int(u * N) % N)
-
-        self.radius_pos = self.path.coords[path_idx]
+        self.radius_pos = (p.x, p.y)
 
         x, y = self.radius_pos
         msg = PointStamped()
@@ -268,7 +264,7 @@ class RadiusMixin:
 
             self.frag.update_max_weight(weight)
             self.frag.update_max_radius(weight)
-            self._merge_fragments(rid, lvl, fid, children)
+            self._merge_fragments(rid, lvl, fid, weight, children)
             self.ghs_pub.publish(init_pkt)
 
             # print(f"Fragment after: {self.frag.__dict__}")
@@ -348,15 +344,19 @@ class RadiusMixin:
             # self.get_logger().warn(
             #     f"Agent {self.agent_id} received CLEAN MERGE from N: {src} for fragment {fid}, root {self.frag.root}"
             # )
+
             # Check its not trying to merge with itself
             if fid == self.frag.frag_id:
                 return
             # self.get_logger().info(
+            #     f"SECEND Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, weight: {weight}, frag rad {self.frag.max_radius}, "
+            # )
+            # self.get_logger().info(
             #     f"Secondary: Frag {self.frag.root}  MERG frag {fid} at N: {self.agent_id}, lvl: {lvl} "
             # )
-            self._merge_fragments(rid, lvl, fid, children)
             self.frag.update_max_weight(weight)
             self.frag.update_max_radius(weight)
+            self._merge_fragments(rid, lvl, fid, weight, children)
 
     def _report_up(self, rid):
         if (
@@ -365,7 +365,7 @@ class RadiusMixin:
             and not self.stop_all
         ):  # Root decides radius
 
-            pkt_r = Float64MultiArray(data=[self.frag.max_radius, rid])
+            pkt_r = Float32MultiArray(data=[self.frag.max_radius, rid])
             if not self.stop_all:
                 self.stop_all = True  # Stop the agent's main loop
                 # send end signal to all children
@@ -407,8 +407,11 @@ class RadiusMixin:
         return False
 
     # fragment‑merge rule
-    def _merge_fragments(self, rid, other_level, other_fid, children):
+    def _merge_fragments(self, rid, other_level, other_fid, other_max_rad, children):
         old_fid = self.frag.root
+        if other_max_rad > self.frag.max_radius:
+            self.frag.update_max_radius(other_max_rad)
+
         if self.frag.level == other_level:
             self.frag.level += 1
             self.frag.frag_id = min(self.frag.frag_id, other_fid)
