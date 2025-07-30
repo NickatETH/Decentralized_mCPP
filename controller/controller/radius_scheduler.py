@@ -1,6 +1,6 @@
 import rclpy
 import numpy as np
-from std_msgs.msg import Float64MultiArray
+from example_interfaces.msg import Float32MultiArray
 
 
 class RadiusScheduler:
@@ -106,7 +106,7 @@ class RadiusScheduler:
             probe_t = float(np.float32(np.round(probe_t, 4)))  # exactly 4 decimals
         return probe_t
 
-    def radius_callback(self, msg: Float64MultiArray) -> None:
+    def radius_callback(self, msg: Float32MultiArray) -> None:
         """Callback when `/radius` arrives."""
         r, t_probe = msg.data
         if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-3:
@@ -128,11 +128,12 @@ class RadiusScheduler:
         self._pending_t = None
 
     def calculate_connectivity(
-        self, starting_point: float, longest_path: float
+        self, starting_point, longest_path: float
     ) -> float:
         """Run all rounds for this sp, blocking until each /radius arrives."""
         self.reset_state()
-        T_total = longest_path / (0.5 * self.v_max)
+        print(f"longest path: {longest_path:.2f} m")
+        T_total = longest_path / (self.v_max)
         self.L = 2.0 * self.v_max * T_total  # compensate for longer paths
         self.node.get_logger().error(
             f"[RS] Starting radius calculation with L={self.L:.2f} m, T_total={T_total:.2f} s"
@@ -161,8 +162,8 @@ class RadiusScheduler:
             rclpy.spin_once(self.node, timeout_sec=0.0)
             rclpy.spin_once(self.node, timeout_sec=0.0)
 
-            payload = [t_probe, t_probe] + [0.25, 0.4, 0.5, 0.6]
-            self.pub.publish(Float64MultiArray(data=payload))
+            payload = np.concatenate(([t_probe, t_probe], starting_point))
+            self.pub.publish(Float32MultiArray(data=payload))
             self.node.get_logger().warn(
                 f"[RS] round {self.round_id}: probe t={t_probe:.3f}"
             )
@@ -199,16 +200,16 @@ class RadiusScheduler:
         roof = [
             min(r_k + self.L * abs(t - t_k) for t_k, r_k in self.samples) for t in ts
         ]
-        plt.plot(ts, roof, "r--", linewidth=1.2, label=f"Roof  (L={self.L:.1f})")
+        plt.plot(ts, roof, color="green", linewidth=1.2, label="Lipschitz Roof")
 
-        # ------------- (2) local cones -----------------------
-        for t_k, r_k in self.samples:
-            plt.plot(
-                [t_k, 0], [r_k, r_k + self.L * abs(t_k - 0)], color="0.7", linewidth=0.8
-            )
-            plt.plot(
-                [t_k, 1], [r_k, r_k + self.L * abs(t_k - 1)], color="0.7", linewidth=0.8
-            )
+        # # ------------- (2) local cones -----------------------
+        # for t_k, r_k in self.samples:
+        #     plt.plot(
+        #         [t_k, 0], [r_k, r_k + self.L * abs(t_k - 0)], color="0.7", linewidth=0.8
+        #     )
+        #     plt.plot(
+        #         [t_k, 1], [r_k, r_k + self.L * abs(t_k - 1)], color="0.7", linewidth=0.8
+        #     )
 
         # ------------- (3) shade next-gap interval ----------
         if len(self.samples) >= 2:
