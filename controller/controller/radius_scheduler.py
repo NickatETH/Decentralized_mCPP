@@ -70,16 +70,23 @@ class RadiusScheduler:
     def radius_callback(self, msg: Float64MultiArray) -> None:
         """Callback when `/radius` arrives."""
         r, t_probe = msg.data
-
         if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-9:
             # record
             self.samples.append((t_probe, r))
             self.samples.sort(key=lambda x: x[0])
             if r > self.max_radius:
                 self.max_radius = r
-            self.node.get_logger().info(
+            self.node.get_logger().warn(
                 f"[RS] got r({t_probe:.3f})={r:.3f}; max={self.max_radius:.3f}"
             )
+            print("\n \n")
+        # check if we already have it
+        elif any(abs(t_probe - t) < 1e-9 for t, _ in self.samples):
+            self.node.get_logger().warn(
+                f"[RS] Duplicate sample received for t={t_probe:.3f}, ignoring."
+            )
+            return
+
         self._pending_t = None
 
     def calculate_connectivity(
@@ -105,8 +112,7 @@ class RadiusScheduler:
 
             self.round_id += 1
             self._pending_t = t_probe
-            rclpy.spin_once(self.node, timeout_sec=0.1)
-            rclpy.spin_once(self.node, timeout_sec=0.1)
+            rclpy.spin_once(self.node, timeout_sec=0.5)
 
             payload = [t_probe, t_probe] + [0.25, 0.4, 0.5, 0.6]
             self.pub.publish(Float64MultiArray(data=payload))
@@ -119,7 +125,7 @@ class RadiusScheduler:
             while (
                 rclpy.ok()
                 and self._pending_t is not None
-                and self.time_of_reset + rclpy.duration.Duration(seconds=2.0)
+                and self.time_of_reset + rclpy.duration.Duration(seconds=4.0)
                 > self.node.get_clock().now()
             ):
                 rclpy.spin_once(self.node, timeout_sec=0.0)

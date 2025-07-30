@@ -68,7 +68,7 @@ class Controller(Node):
     def __init__(self) -> None:
         super().__init__("controller")
         self.start_pub = self.create_publisher(
-            Float64MultiArray, "/start_ghs", qos_reliable_tx
+            Float64MultiArray, "/start_ghs", qos_reliable_vol
         )
         self.radius_marker_pub = self.create_publisher(
             Marker, "/comm_radius_marker", qos_reliable_tx
