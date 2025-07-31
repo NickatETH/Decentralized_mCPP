@@ -148,6 +148,9 @@ class Controller(Node):
         self.a = 1.0
         self.b = 1.0
 
+        self.eval_cancelled = False
+        self.eval_timer = None
+
         for aid in AGENT_IDS:
             proc = launch_agent(aid)
         while not all(self.reset_response):
@@ -201,6 +204,9 @@ class Controller(Node):
                 req.b = self.b
                 future = cli.call_async(req)
                 while rclpy.ok() and not future.done():
+                    if self.eval_cancelled:
+                        self.get_logger().error("Evaluation cancelled, skipping energy calculation.")
+                        return total, longest_path
                     rclpy.spin_once(self, timeout_sec=0.8)
                 try:
                     energy = future.result().energy
@@ -227,9 +233,17 @@ class Controller(Node):
         longest_path *= PATH_SCALE
         max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
         return max_radius, total_energy
+    
+    def eval_timeout_callback(self):
+        self.radius_scheduler.cancelled = True
+        self.eval_cancelled = True
+        rclpy.spin_once(self, timeout_sec=0.1)
+        time.sleep(1.0)
+        if self.eval_timer is not None:
+            self.eval_timer.cancel()
+            self.eval_timer = None
 
     def run_bayes_opt(self):
-        executor = ThreadPoolExecutor(max_workers=1)
         while True:
             self.get_logger().info("another BO round!")
             rclpy.spin_once(self, timeout_sec=0.0)
@@ -259,15 +273,21 @@ class Controller(Node):
                 )
                 self.reset_agent_pub.publish(msg)
 
-            future = executor.submit(self.eval_iteration, sps)
+            self.eval_cancelled = False
 
-            try:
-                max_radius, total_energy = future.result(timeout=90.0)
-            except TimeoutError:
-                self.radius_scheduler.cancelled = True
-                rclpy.spin_once(self, timeout_sec=0.1)
-                self.get_logger().error("BO evaluation timed out, skipping this point.")
-                time.sleep(1.0)
+            self.eval_timer = self.create_timer(90.0, self.eval_timeout_callback)
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+            max_radius, total_energy = self.eval_iteration(sps)
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+            if self.eval_timer is not None:
+                self.eval_timer.cancel()
+                self.eval_timer = None
+
+            if self.eval_cancelled or total_energy == 0.0:
+                self.get_logger().error("Evaluation cancelled, skipping this point.")
+                self.eval_cancelled = False
                 continue
 
             self.cost_history.append((total_energy * lambda_BO + max_radius))
