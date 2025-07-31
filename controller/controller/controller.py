@@ -19,7 +19,7 @@ import time
 NUM_AGENTS = 4
 NUM_CANDIDATES = 1000
 RANDOM_SEED = 42
-lambda_BO = 1.0
+lambda_BO = 0.00057
 MAX_EVALS = 50
 PATH_SCALE = 100.0
 
