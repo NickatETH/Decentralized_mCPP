@@ -1,20 +1,24 @@
 import os
+import random
 import subprocess
+import time
+from concurrent.futures import TimeoutError
 from typing import Dict
 
-import rclpy
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.ticker import MaxNLocator
+
+import rclpy
 from rclpy.node import Node
-from interface.srv import ComputeEnergy
-from example_interfaces.msg import Empty, Float32MultiArray
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from visualization_msgs.msg import Marker  # Add this import
+
+from example_interfaces.msg import Empty, Float32MultiArray
+from interface.srv import ComputeEnergy
+from visualization_msgs.msg import Marker
+
 from .radius_scheduler import RadiusScheduler
 from .thompson_scheduler import ThompsonScheduler
-import random
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
-import time
 
 NUM_AGENTS = 4
 NUM_CANDIDATES = 1000
@@ -154,7 +158,6 @@ class Controller(Node):
         for aid in AGENT_IDS:
             proc = launch_agent(aid)
         while not all(self.reset_response):
-            print(self.reset_response)
             rclpy.spin_once(self, timeout_sec=0.1)
         self.get_logger().info("All agents launched and reset.")
         time.sleep(1.0)
@@ -182,9 +185,6 @@ class Controller(Node):
             self.get_logger().warn("Reset message too short, expected 3 floats.")
             return
         if msg.data[0] != -(1.0):
-            self.get_logger().warn(
-                f"Reset message not for this agent: {msg.data[0]} != -1.0"
-            )
             return
         self.reset_response[int(msg.data[1] - 1.0)] = True
 
@@ -205,7 +205,9 @@ class Controller(Node):
                 future = cli.call_async(req)
                 while rclpy.ok() and not future.done():
                     if self.eval_cancelled:
-                        self.get_logger().error("Evaluation cancelled, skipping energy calculation.")
+                        self.get_logger().error(
+                            "Evaluation cancelled, skipping energy calculation."
+                        )
                         return total, longest_path
                     rclpy.spin_once(self, timeout_sec=0.8)
                 try:
@@ -234,10 +236,12 @@ class Controller(Node):
         if not self.eval_cancelled:
             max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
         else:
-            self.get_logger().error("Evaluation cancelled, skipping radius calculation.")
+            self.get_logger().error(
+                "Evaluation cancelled, skipping radius calculation."
+            )
             return 0.0, 0.0
         return max_radius, total_energy
-    
+
     def eval_timeout_callback(self):
         self.radius_scheduler.cancelled = True
         self.eval_cancelled = True
@@ -315,10 +319,6 @@ class Controller(Node):
         self.shutdown = True
 
     def plot_convergence(self) -> None:
-        import matplotlib.pyplot as plt
-        import numpy as np
-        from matplotlib.ticker import MaxNLocator
-
         costs = np.array(self.cost_history)
         best = np.minimum.accumulate(costs)
         iterations = np.arange(1, len(costs) + 1)

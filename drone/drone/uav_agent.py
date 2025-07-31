@@ -89,7 +89,6 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
                 Float32MultiArray(data=[-(1.0), self.agent_id, 0.0, 0.0])
             )
             rclpy.spin_once(self, timeout_sec=0.5)
-            
 
     def reset_position_callback(self, msg: Float32MultiArray) -> None:
         """Reset the UAV's position and partition state if the message targets this agent."""
@@ -185,13 +184,10 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv
 
-    # Parse our custom args first; leave the rest for rclpy
     cli_args, ros_args = _parse_cli(argv)
 
-    # Initialise ROS with remaining arguments
     rclpy.init(args=ros_args)
 
-    # Build boundary polygon (simple rectangle)
     boundary = Polygon(
         [
             (cli_args.xmin, cli_args.ymin),
@@ -201,7 +197,6 @@ def main(argv=None):
         ]
     )
 
-    # Instantiate and spin the agent
     agent = UavAgent(
         agent_id=cli_args.agent_id,
         num_agents=cli_args.num_agents,
@@ -212,7 +207,6 @@ def main(argv=None):
         while not agent.shutdown:
             rclpy.spin_once(agent, timeout_sec=0.0)
     except (KeyboardInterrupt, ExternalShutdownException, RCLError):
-        # Normal termination triggered by Ctrl‑C or external shutdown
         pass
     finally:
         if agent.shutdown:

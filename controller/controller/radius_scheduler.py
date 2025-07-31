@@ -37,17 +37,10 @@ class RadiusScheduler:
         self.ghs_timer = None
         self.cancelled = False
 
-    # ---------------------------------------------------------------------
     def roof(self, t: float) -> float:
-        """
-        Lipschitz roof  U(t) = min_k ( r_k + L · |t − t_k| ).
-        Returns +∞ if no samples have been taken yet.
-        """
         if not self.samples:
             return float("inf")
         return min(r_k + self.L * abs(t - t_k) for t_k, r_k in self.samples)
-
-    # ---------------------------------------------------------------------
 
     def next_probe_time(self) -> float | None:
         """
@@ -62,21 +55,18 @@ class RadiusScheduler:
         if len(self.samples) == 0:
             return 0.0  # first ever probe
 
-        # τ values already “used” (sampled or still awaiting a reply)
         used_ts = {t for t, _ in self.samples}
         if self._pending_t is not None:
             used_ts.add(self._pending_t)
 
         best_U = -math.inf
-        probe_t = None  # τ we will return (may remain None)
+        probe_t = None
 
-        # evaluate U at every sample (cheap and sometimes the maximum)
         for t_k, _ in self.samples:
             U_val = self.roof(t_k)
             if U_val > best_U:
-                best_U, probe_t = U_val, t_k  # may be a duplicate—check later
+                best_U, probe_t = U_val, t_k
 
-        # evaluate U at every valid intersection between adjacent cones
         for (t0, r0), (t1, r1) in zip(self.samples, self.samples[1:]):
             if self.L == 0:
                 continue
@@ -131,9 +121,7 @@ class RadiusScheduler:
 
         self._pending_t = None
 
-    def calculate_connectivity(
-        self, starting_point, longest_path: float
-    ) -> float:
+    def calculate_connectivity(self, starting_point, longest_path: float) -> float:
         """Run all rounds for this sp, blocking until each /radius arrives."""
         self.reset_state()
         print(f"longest path: {longest_path:.2f} m")
@@ -157,7 +145,7 @@ class RadiusScheduler:
                         self.node.get_logger().error(
                             f"!!!Final max radius: {self.max_radius:.2f} m"
                         )
-                    else: 
+                    else:
                         self.node.get_logger().error("Not enough samples, returning")
                     break
 
@@ -183,7 +171,7 @@ class RadiusScheduler:
                 and self._pending_t is not None
                 and self.time_of_reset + rclpy.duration.Duration(seconds=4.0)
                 > self.node.get_clock().now()
-            ):  
+            ):
                 if self.cancelled:
                     self.node.get_logger().info("Radius calculation cancelled.")
                     break
@@ -200,57 +188,12 @@ class RadiusScheduler:
             self.node.get_logger().warn("No samples to plot yet.")
             return
 
-        # ------------- basic scatter plot --------------------
         t_vals, r_vals = zip(*self.samples)
         plt.figure(figsize=(10, 6))
         plt.plot(t_vals, r_vals, "o-", label="Samples")
         plt.axhline(self.max_radius, ls="--", color="r", label="Max Radius")
 
-        # ------------- (1) global roof -----------------------
-        ts = np.linspace(0, 1, 400)
-        roof = [
-            min(r_k + self.L * abs(t - t_k) for t_k, r_k in self.samples) for t in ts
-        ]
-        plt.plot(ts, roof, color="green", linewidth=1.2, label="Lipschitz Roof")
-
-        # # ------------- (2) local cones -----------------------
-        # for t_k, r_k in self.samples:
-        #     plt.plot(
-        #         [t_k, 0], [r_k, r_k + self.L * abs(t_k - 0)], color="0.7", linewidth=0.8
-        #     )
-        #     plt.plot(
-        #         [t_k, 1], [r_k, r_k + self.L * abs(t_k - 1)], color="0.7", linewidth=0.8
-        #     )
-
-        # ------------- (3) shade next-gap interval ----------
-        if len(self.samples) >= 2:
-            t_probe = self.next_probe_time()
-            if t_probe is not None:
-                # find its bracketing samples
-                i_right = next(
-                    i for i, (t, _) in enumerate(self.samples) if t > t_probe
-                )
-                t0, r0 = self.samples[i_right - 1]
-                t1, r1 = self.samples[i_right]
-                chord = np.interp(ts, [t0, t1], [r0, r1])
-                roof_mid = min(
-                    r_k + self.L * abs(t_probe - t_k) for t_k, r_k in self.samples
-                )
-                gap = roof_mid - np.interp(t_probe, [t0, t1], [r0, r1])
-
-                plt.fill_between(
-                    ts,
-                    chord,
-                    roof,
-                    where=((ts >= t0) & (ts <= t1)),
-                    color="orange",
-                    alpha=0.1,
-                    label=f"Gap ≈ {gap:.2f} m",
-                )
-                plt.axvline(t_probe, color="orange", ls=":", lw=1)
-
-        # ------------- cosmetics -----------------------------
-        plt.title("Radius Samples with Lipschitz Envelope")
+        plt.title("Communication Radius r(τ)")
         plt.xlabel("Normalised Time τ")
         plt.ylabel("Radius (m)")
         plt.xlim(0, 1)
@@ -258,4 +201,4 @@ class RadiusScheduler:
         plt.grid(True, linestyle=":")
         plt.legend(loc="upper left")
         plt.tight_layout()
-        plt.show()
+        plt.savefig("radius_samples.png", dpi=300)
