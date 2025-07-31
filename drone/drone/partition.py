@@ -224,8 +224,8 @@ class PartitionMixin:
             all_converged = all(nb[3] >= 1.0 for nb in self.neighbours)
 
             if all_converged:
-                if self.converged > 10.0 and all(
-                    nb[3] >= 10.0 for nb in self.neighbours
+                if self.converged > 20.0 and all(
+                    nb[3] >= 20.0 for nb in self.neighbours
                 ):
                     self.get_logger().info(f"Agent {self.agent_id} converged forall: ")
 

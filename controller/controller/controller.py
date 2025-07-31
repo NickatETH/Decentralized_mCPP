@@ -18,7 +18,7 @@ NUM_AGENTS = 4
 NUM_CANDIDATES = 1000
 RANDOM_SEED = 42
 lambda_BO = 1.0
-MAX_EVALS = 3
+MAX_EVALS = 20
 PATH_SCALE = 100.0
 
 np.random.seed(RANDOM_SEED)
@@ -165,6 +165,7 @@ class Controller(Node):
             self.get_logger().info(f"Waiting for {srv} …")
             while not cli.wait_for_service(timeout_sec=0.1):
                 self.get_logger().warn(f"{srv} not up yet, waiting…")
+                rclpy.spin_once(self, timeout_sec=0.1)
         self.get_logger().info("All energy clients initialized.")
 
     def reset_position_callback(self, msg: Float32MultiArray) -> None:
