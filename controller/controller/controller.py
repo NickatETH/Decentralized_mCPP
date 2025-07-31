@@ -329,7 +329,7 @@ class Controller(Node):
 
         ax.set_xlabel("Iteration")
         ax.set_ylabel("Cost = r + λ·E")
-        ax.set_title("Bayesian Optimization Convergence")
+        ax.set_title("Bayesian Optimization Progress")
 
         # ensure only integer ticks
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
@@ -343,7 +343,7 @@ def main(args=None) -> None:
     rclpy.init(args=args)
     node = Controller()
     try:
-        print("Starting Bayesianff Optimization loop...")
+        print("Starting Bayesian Optimization loop...")
         node.run_bayes_opt()
     finally:
         node.destroy_node()
