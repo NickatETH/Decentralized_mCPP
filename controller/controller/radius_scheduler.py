@@ -153,9 +153,12 @@ class RadiusScheduler:
             else:
                 t_probe = self.next_probe_time()
                 if t_probe is None:
-                    self.node.get_logger().error(
-                        f"!!!Final max radius: {self.max_radius:.2f} m"
-                    )
+                    if len(self.samples) > 10:
+                        self.node.get_logger().error(
+                            f"!!!Final max radius: {self.max_radius:.2f} m"
+                        )
+                    else: 
+                        self.node.get_logger().error("Not enough samples, returning")
                     break
 
             if self.round_id > 50:
