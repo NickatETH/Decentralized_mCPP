@@ -4,6 +4,12 @@ import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
+l = [
+    10.0, 10.0, 10.0, 10.0,
+    10.0, 10.0, 10.0, 10.0,
+    0.5,  0.5,  0.5,  0.5,
+]
+
 
 class ThompsonScheduler:
     """
@@ -23,7 +29,7 @@ class ThompsonScheduler:
         self.evals     = 0
 
         # GP with Matern + white noise
-        kernel = ConstantKernel(1.0) * Matern(length_scale=1.0, nu=2.5) \
+        kernel = ConstantKernel(1.0) * Matern(length_scale=l, nu=2.5) \
                + WhiteKernel(noise_level=1e-3)
         self.gp = GaussianProcessRegressor(kernel=kernel, normalize_y=True)
 
@@ -48,7 +54,7 @@ class ThompsonScheduler:
 
         mu, cov = self.gp.predict(self.cand, return_cov=True)
         sample  = np.random.multivariate_normal(mu, cov)
-        best_i  = int(np.argmax(sample))
+        best_i  = int(np.argmin(sample))
         return self.cand[best_i]
 
     def observe(self, x: np.ndarray, cost: float):
