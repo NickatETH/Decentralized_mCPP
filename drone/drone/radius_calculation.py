@@ -107,6 +107,10 @@ class RadiusMixin:
         sp = data[idx]
         self.starting_point = sp
 
+        if self.path == None:
+            print("Had a empty path")
+            return
+
         u = (t_target + sp) % 1.0
         p: Point = self.path.interpolate(u, normalized=True)
 
