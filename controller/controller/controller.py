@@ -231,14 +231,16 @@ class Controller(Node):
     def eval_iteration(self, sps):
         total_energy, longest_path = self.calculate_energy()
         longest_path *= PATH_SCALE
-        max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
+        if not self.eval_cancelled:
+            max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
+        else:
+            self.get_logger().error("Evaluation cancelled, skipping radius calculation.")
+            return 0.0, 0.0
         return max_radius, total_energy
     
     def eval_timeout_callback(self):
         self.radius_scheduler.cancelled = True
         self.eval_cancelled = True
-        rclpy.spin_once(self, timeout_sec=0.1)
-        time.sleep(1.0)
         if self.eval_timer is not None:
             self.eval_timer.cancel()
             self.eval_timer = None
@@ -273,8 +275,6 @@ class Controller(Node):
                 )
                 self.reset_agent_pub.publish(msg)
 
-            self.eval_cancelled = False
-
             self.eval_timer = self.create_timer(90.0, self.eval_timeout_callback)
             rclpy.spin_once(self, timeout_sec=0.1)
 
@@ -288,6 +288,7 @@ class Controller(Node):
             if self.eval_cancelled or total_energy == 0.0:
                 self.get_logger().error("Evaluation cancelled, skipping this point.")
                 self.eval_cancelled = False
+                time.sleep(1.0)
                 continue
 
             self.cost_history.append((total_energy * lambda_BO + max_radius))
