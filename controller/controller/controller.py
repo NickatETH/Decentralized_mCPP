@@ -13,7 +13,7 @@ from visualization_msgs.msg import Marker  # Add this import
 from .radius_scheduler import RadiusScheduler
 from .thompson_scheduler import ThompsonScheduler
 import random
-import concurrent
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import time
 
 NUM_AGENTS = 4
@@ -239,7 +239,7 @@ class Controller(Node):
         return max_radius, total_energy
 
     def run_bayes_opt(self):
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        executor = ThreadPoolExecutor(max_workers=1)
         while True:
             self.get_logger().info("another BO round!")
             rclpy.spin_once(self, timeout_sec=0.0)
@@ -273,7 +273,7 @@ class Controller(Node):
 
             try:
                 max_radius, total_energy = future.result(timeout=90.0)
-            except concurrent.futures.TimeoutError:
+            except TimeoutError:
                 self.radius_scheduler.cancelled = True
                 rclpy.spin_once(self, timeout_sec=0.1)
                 self.get_logger().error("BO evaluation timed out, skipping this point.")
