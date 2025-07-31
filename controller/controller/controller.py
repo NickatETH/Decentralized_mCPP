@@ -20,7 +20,7 @@ NUM_AGENTS = 4
 NUM_CANDIDATES = 1000
 RANDOM_SEED = 42
 lambda_BO = 0.00057
-MAX_EVALS = 50
+MAX_EVALS = 1000
 PATH_SCALE = 100.0
 
 np.random.seed(RANDOM_SEED)
@@ -275,7 +275,7 @@ class Controller(Node):
                 )
                 self.reset_agent_pub.publish(msg)
 
-            self.eval_timer = self.create_timer(90.0, self.eval_timeout_callback)
+            self.eval_timer = self.create_timer(110.0, self.eval_timeout_callback)
             rclpy.spin_once(self, timeout_sec=0.1)
 
             max_radius, total_energy = self.eval_iteration(sps)

@@ -113,8 +113,6 @@ class RadiusScheduler:
     def radius_callback(self, msg: Float32MultiArray) -> None:
         """Callback when `/radius` arrives."""
         r, t_probe = msg.data
-        self.r_buffer.append(r)
-        r = float(np.median(self.r_buffer)) 
         if self._pending_t is not None and abs(t_probe - self._pending_t) < 1e-3:
             # record
             self.samples.append((t_probe, r))

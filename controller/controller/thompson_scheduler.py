@@ -5,9 +5,9 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 l = [
-    10.0, 10.0, 10.0, 10.0,
-    10.0, 10.0, 10.0, 10.0,
-    0.5,  0.5,  0.5,  0.5,
+    5.0, 5.0, 5.0, 5.0,
+    5.0, 5.0, 5.0, 5.0,
+    0.2,  0.2,  0.2,  0.2,
 ]
 
 
@@ -29,9 +29,9 @@ class ThompsonScheduler:
         self.evals     = 0
 
         # GP with Matern + white noise
-        kernel = ConstantKernel(1.0) * Matern(length_scale=l, nu=2.5) \
-               + WhiteKernel(noise_level=1e-3)
-        self.gp = GaussianProcessRegressor(kernel=kernel, normalize_y=True)
+        kernel = ConstantKernel(1.0, constant_value_bounds=(1e-2, 1e2)) * Matern(length_scale=l, length_scale_bounds=[(1e-2, 1e2)], nu=1.5) \
+               + WhiteKernel(noise_level=0.1, noise_level_bounds=(1e-3, 1e1))
+        self.gp = GaussianProcessRegressor(kernel=kernel, normalize_y=True, n_restarts_optimizer=10)
 
         # History of (x_vector, cost)
         self.X: list[np.ndarray] = []
