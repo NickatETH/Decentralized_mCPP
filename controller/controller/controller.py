@@ -167,6 +167,7 @@ class Controller(Node):
             self.get_logger().info(f"Waiting for {srv} …")
             while not cli.wait_for_service(timeout_sec=0.1):
                 self.get_logger().warn(f"{srv} not up yet, waiting…")
+                rclpy.spin_once(self, timeout_sec=0.1)
         self.get_logger().info("All energy clients initialized.")
 
     def reset_position_callback(self, msg: Float32MultiArray) -> None:
@@ -186,6 +187,7 @@ class Controller(Node):
         Fire off all UAV energy requests in parallel and return the sum.
         """
         total = 0.0
+        now = self.get_clock().now()
         longest_path = 0.0
         for aid, cli in self.energy_clients_dict.items():
             while True:
@@ -204,6 +206,15 @@ class Controller(Node):
                             f"Agent {aid} not ready, retrying...",
                             throttle_duration_sec=1.0,
                         )
+                        if (
+                            now + rclpy.duration.Duration(seconds=10.0)
+                            < self.get_clock().now()
+                        ):
+                            self.get_logger().error(
+                                f"Agent {aid} did not respond in time, skipping."
+                            )
+                            return -1.0, -1.0
+                            break
                         continue
                     total += energy
                     if longest_path < future.result().path_length:
@@ -269,9 +280,7 @@ class Controller(Node):
                 time.sleep(1.0)
                 continue
 
-            self.cost_history.append(
-                (total_energy * lambda_BO + max_radius)
-            )
+            self.cost_history.append((total_energy * lambda_BO + max_radius))
 
             out = Float32MultiArray()
             out.data = x.tolist() + [max_radius, total_energy]
@@ -304,18 +313,18 @@ class Controller(Node):
         iterations = np.arange(1, len(costs) + 1)
 
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.plot(iterations, costs, marker='o', linestyle='--', label='Observed cost')
-        ax.plot(iterations, best,  marker='s', linestyle='-',  label='Best so far')
+        ax.plot(iterations, costs, marker="o", linestyle="--", label="Observed cost")
+        ax.plot(iterations, best, marker="s", linestyle="-", label="Best so far")
 
-        ax.set_xlabel('Iteration')
-        ax.set_ylabel('Cost = r + λ·E')
-        ax.set_title('Bayesian Optimization Convergence')
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Cost = r + λ·E")
+        ax.set_title("Bayesian Optimization Convergence")
 
         # ensure only integer ticks
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
         fig.tight_layout()
-        fig.savefig('bo_convergence.png', dpi=300)
+        fig.savefig("bo_convergence.png", dpi=300)
         plt.close(fig)
 
 
