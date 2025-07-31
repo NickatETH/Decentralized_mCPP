@@ -125,7 +125,7 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
             return
 
         self.path = offset_path  # Store the path for later use
-        self.get_logger().info(f"Computed STC path: {len(offset_path.coords)} points")
+        self.get_logger().info(f"Computed STC path: points")
 
         self._energy_srv = self.create_service(
             ComputeEnergy, "~/compute_energy", self.compute_energy_cb
