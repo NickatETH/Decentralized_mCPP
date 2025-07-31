@@ -13,19 +13,21 @@ from visualization_msgs.msg import Marker  # Add this import
 from .radius_scheduler import RadiusScheduler
 from .thompson_scheduler import ThompsonScheduler
 import random
+import concurrent
+import time
 
 NUM_AGENTS = 4
 NUM_CANDIDATES = 1000
 RANDOM_SEED = 42
 lambda_BO = 1.0
-MAX_EVALS = 3
+MAX_EVALS = 50
 PATH_SCALE = 100.0
 
 np.random.seed(RANDOM_SEED)
 
 AGENT_IDS = list(range(1, NUM_AGENTS + 1))
 AGENT_POSITIONS = {
-    aid: (random.uniform(0, 50), random.uniform(0, 50)) for aid in AGENT_IDS
+    aid: (random.uniform(0, 20), random.uniform(0, 20)) for aid in AGENT_IDS
 }
 
 BOUNDARY_ARGS = [
@@ -219,9 +221,16 @@ class Controller(Node):
             x, y = AGENT_POSITIONS[aid]
             self.reset_agent_pub.publish(Float32MultiArray(data=[aid, 1.0, x, y]))
 
+    def eval_iteration(self, sps):
+        total_energy, longest_path = self.calculate_energy()
+        longest_path *= PATH_SCALE
+        max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
+        return max_radius, total_energy
+
     def run_bayes_opt(self):
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         while True:
-            self.get_logger().info("another BO round!")
+            self.get_logger().info("another BO round!")
             rclpy.spin_once(self, timeout_sec=0.0)
             x = self.thompson_scheduler.next_point()
             if x is None:
@@ -249,9 +258,16 @@ class Controller(Node):
                 )
                 self.reset_agent_pub.publish(msg)
 
-            total_energy, longest_path = self.calculate_energy()
-            longest_path *= PATH_SCALE
-            max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
+            future = executor.submit(self.eval_iteration, sps)
+
+            try:
+                max_radius, total_energy = future.result(timeout=90.0)
+            except concurrent.futures.TimeoutError:
+                self.radius_scheduler.cancelled = True
+                rclpy.spin_once(self, timeout_sec=0.1)
+                self.get_logger().error("BO evaluation timed out, skipping this point.")
+                time.sleep(1.0)
+                continue
 
             self.cost_history.append(
                 (total_energy * lambda_BO + max_radius)

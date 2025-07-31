@@ -24,6 +24,7 @@ class RadiusScheduler:
         self.max_radius = 0.0  # highest r(t) seen so far
         self.starting_point = 0.0
         self.r_buffer = deque(maxlen=3)
+        self.cancelled = False
 
     def reset_state(self) -> None:
         """Reset the state for a new round."""
@@ -34,6 +35,7 @@ class RadiusScheduler:
         self._pending_t = None  # t where we are waiting for a reply
         self.time_of_reset = self.node.get_clock().now()
         self.ghs_timer = None
+        self.cancelled = False
 
     # ---------------------------------------------------------------------
     def roof(self, t: float) -> float:
@@ -144,6 +146,9 @@ class RadiusScheduler:
         )
 
         while True:
+            if self.cancelled:
+                self.node.get_logger().info("Radius calculation cancelled.")
+                break
             # pick next t
             if self.round_id < 2:
                 t_probe = float(self.round_id)
@@ -177,7 +182,10 @@ class RadiusScheduler:
                 and self._pending_t is not None
                 and self.time_of_reset + rclpy.duration.Duration(seconds=4.0)
                 > self.node.get_clock().now()
-            ):
+            ):  
+                if self.cancelled:
+                    self.node.get_logger().info("Radius calculation cancelled.")
+                    break
                 rclpy.spin_once(self.node, timeout_sec=0.0)
 
         return self.max_radius
