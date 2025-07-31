@@ -20,7 +20,7 @@ NUM_AGENTS = 4
 NUM_CANDIDATES = 1000
 RANDOM_SEED = 42
 lambda_BO = 1.0
-MAX_EVALS = 50
+MAX_EVALS = 8
 PATH_SCALE = 100.0
 
 np.random.seed(RANDOM_SEED)
@@ -154,6 +154,9 @@ class Controller(Node):
             print(self.reset_response)
             rclpy.spin_once(self, timeout_sec=0.1)
         self.get_logger().info("All agents launched and reset.")
+        time.sleep(1.0)
+        for i in range(50):
+            rclpy.spin_once(self, timeout_sec=0.01)
         self.reset_agents()
         while not all(self.reset_response):
             rclpy.spin_once(self, timeout_sec=0.05)

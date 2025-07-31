@@ -65,6 +65,7 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
         self.boundary = boundary  # Polygon defining the boundary of the area
         self.path = None
         self.shutdown = False  # Initialize shutdown as a boolean
+        self.start_time = None
 
         self.shutdown_sub = self.create_subscription(
             Empty, "/shutdown", self.shutdown_callback, 2
@@ -103,6 +104,7 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
         self.path = None
         # self.reset_partition(position=position, polygon=self.boundary)
         self.get_logger().info(f"UAV {self.agent_id} reset to position {position}")
+        self.start_time = self.get_clock().now()
         self.pb_timer = self.create_timer(0.1, self.balance_power_cells)
 
         # pub ok
@@ -119,6 +121,8 @@ class UavAgent(Node, RadiusMixin, EnergyMixin, STCMixin, PartitionMixin):
         grid = self.polygon_to_grid(self.polygon, cell_size)
         stc_path = self.compute_stc(grid)
         offset_path = self.offset_stc_path(stc_path, cell_size)
+        if offset_path == []:
+            return
 
         self.path = offset_path  # Store the path for later use
         self.get_logger().info(f"Computed STC path: {len(offset_path.coords)} points")

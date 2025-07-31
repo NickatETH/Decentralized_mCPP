@@ -169,6 +169,11 @@ class PartitionMixin:
         sleep_ns = 5_000_000 - (now.nanoseconds % 5_000_000)
         if sleep_ns < 5_000_000:
             rclpy.spin_once(self, timeout_sec=sleep_ns / 1e9)
+        if self.start_time + Duration(seconds=10.0) < now:
+            self.pb_timer.cancel()
+            rclpy.spin_once(self, timeout_sec=0.0)
+            print("Unstuck agent", self.agent_id)
+            return
 
         cell = self.compute_power_cell()
         if len(self.neighbours) == 0:
@@ -244,5 +249,6 @@ class PartitionMixin:
             self.converged = 0.0
             self.weight = self.weight - self.GAMMA * (self.polygon.area - target_area)
             self.weight = max(-10, min(self.weight, 10.0))
+        rclpy.spin_once(self, timeout_sec=0.0)
 
         return

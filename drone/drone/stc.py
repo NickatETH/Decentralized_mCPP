@@ -1,4 +1,5 @@
 import numpy as np
+import rclpy
 from collections import defaultdict
 from typing import Iterable, Dict, List, Tuple
 from shapely.geometry import Polygon, Point, LineString
