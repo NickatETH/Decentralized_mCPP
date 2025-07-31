@@ -205,19 +205,6 @@ class Controller(Node):
                 try:
                     energy = future.result().energy
                     if energy == -1.0:
-                        self.get_logger().warn(
-                            f"Agent {aid} not ready, retrying...",
-                            throttle_duration_sec=1.0,
-                        )
-                        if (
-                            now + rclpy.duration.Duration(seconds=10.0)
-                            < self.get_clock().now()
-                        ):
-                            self.get_logger().error(
-                                f"Agent {aid} did not respond in time, skipping."
-                            )
-                            return -1.0, -1.0
-                            break
                         continue
                     total += energy
                     if longest_path < future.result().path_length:
