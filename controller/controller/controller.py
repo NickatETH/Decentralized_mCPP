@@ -275,9 +275,9 @@ class Controller(Node):
             out = Float32MultiArray()
             out.data = x.tolist() + [max_radius, total_energy]
             self.bo_result_pub.publish(out)
+            self.plot_convergence()
 
         self.get_logger().info("BO complete ‐ shutting down agents")
-        self.plot_convergence()
         self.total_energy = 0.0
         self.shutdown_agents()
 
