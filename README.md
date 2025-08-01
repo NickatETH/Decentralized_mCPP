@@ -6,6 +6,11 @@ This repository implements a distributed multi-UAV coverage path planning system
 Felix Muller and Nick Truttmann  
 ETH Zurich, 2025
 
+## License
+
+This project is licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License](https://creativecommons.org/licenses/by-nc-sa/4.0/).
+
+
 ---
 ![Example Coverage](images/Voronoi_STC.png)
 
@@ -18,12 +23,9 @@ This project addresses the challenge of deploying multiple UAVs to efficiently c
 1. **Distributed centroid Voronoi partitioning**: Divides the workspace evenly among UAVs while accounting for their relative capabilities
 2. **Spanning Tree Coverage (STC)**: Generates efficient coverage paths within each partition
 3. **Communication Radius estimation**: Uses GHS algorithm to create a minimum spanning tree (MST) to estimate the required communication range. 
-4. **Bayesian Optimization**: Optimizes starting positions and seeds to minimize both energy consumption and communication radius
+4. **Distributed Bayesian Optimization via Thompson Sampling**: Optimizes starting positions and seeds to minimize both energy consumption and communication radius
 
 The system is implemented as a distributed multi-agent ROS2 application where each UAV operates independently while maintaining network connectivity.
-
-## Key Components
-
 
 ## Results
 
@@ -33,7 +35,7 @@ Our approach achieves:
 - Optimized energy efficiency 
 - Scalability to multiple UAVs
 
-![Optimization Convergence](images/bo_convergence4.png)
+![Optimization Convergence](images/bo_progress.png)
 
 ## Usage
 
