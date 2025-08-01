@@ -233,7 +233,7 @@ class Controller(Node):
         longest_path *= PATH_SCALE
         if not self.eval_cancelled:
             max_radius = self.radius_scheduler.calculate_connectivity(sps, longest_path)
-            if self.max_radius == 0.0:
+            if max_radius == 0.0:
                 self.get_logger().error("Max radius is zero, skipping this point.")
                 return 0.0, 0.0
         else:
