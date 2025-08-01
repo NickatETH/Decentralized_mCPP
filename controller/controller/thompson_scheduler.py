@@ -5,9 +5,9 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 l = [
-    5.0, 5.0, 5.0, 5.0,
-    5.0, 5.0, 5.0, 5.0,
-    0.2,  0.2,  0.2,  0.2,
+    10.0, 10.0, 10.0, 10.0,
+    10.0, 10.0, 10.0, 10.0,
+    0.5,  0.5,  0.5,  0.5,
 ]
 
 
@@ -29,8 +29,8 @@ class ThompsonScheduler:
         self.evals     = 0
 
         # GP with Matern + white noise
-        kernel = ConstantKernel(1.0, constant_value_bounds=(1e-2, 1e2)) * Matern(length_scale=l, length_scale_bounds=[(1e-2, 1e2)], nu=1.5) \
-               + WhiteKernel(noise_level=0.1, noise_level_bounds=(1e-3, 1e1))
+        kernel = ConstantKernel(1.0, constant_value_bounds=(1e-2, 1e4)) * Matern(length_scale=l, length_scale_bounds=[(1e-2, 1e4)], nu=1.5) \
+               + WhiteKernel(noise_level=0.1, noise_level_bounds=(1e-6, 1e1))
         self.gp = GaussianProcessRegressor(kernel=kernel, normalize_y=True, n_restarts_optimizer=10)
 
         # History of (x_vector, cost)
@@ -44,7 +44,7 @@ class ThompsonScheduler:
         self.evals += 1
 
         # Cold start: just return the first few candidates uniquely
-        if len(self.X) < len(self.cand):
+        if len(self.X) < 10:
             return self.cand[len(self.X)]
 
         # Fit GP and draw one Thompson sample over ALL M candidates
